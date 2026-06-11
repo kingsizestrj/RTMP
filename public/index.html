@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RTMP Panel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Tela de login -->
+  <div id="login-screen" class="login-screen hidden">
+    <form id="login-form" class="login-box">
+      <h1>📡 RTMP Panel</h1>
+      <input type="text" id="login-user" placeholder="Usuário" autocomplete="username" required>
+      <input type="password" id="login-pass" placeholder="Senha" autocomplete="current-password" required>
+      <button type="submit" class="btn primary">Entrar</button>
+      <p id="login-error" class="error-msg"></p>
+    </form>
+  </div>
+
+  <!-- App -->
+  <div id="app" class="hidden">
+    <header>
+      <h1>📡 RTMP Panel</h1>
+      <nav>
+        <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+        <button class="tab-btn" data-tab="videos">Vídeos</button>
+        <button class="tab-btn" data-tab="channels">Canais</button>
+        <button class="tab-btn" data-tab="relays">Relays</button>
+        <button class="tab-btn" data-tab="inputs">Entradas ao vivo</button>
+      </nav>
+      <button id="logout-btn" class="btn small">Sair</button>
+    </header>
+
+    <main>
+      <!-- DASHBOARD -->
+      <section id="tab-dashboard" class="tab">
+        <div id="dash-cards" class="cards"></div>
+        <h2>No ar agora</h2>
+        <div id="live-list" class="list"></div>
+      </section>
+
+      <!-- VÍDEOS -->
+      <section id="tab-videos" class="tab hidden">
+        <div class="toolbar">
+          <h2>Acervo de vídeos</h2>
+          <label class="btn primary">
+            ⬆️ Enviar vídeos
+            <input type="file" id="upload-input" multiple accept="video/*,.mkv,.flv,.ts" hidden>
+          </label>
+        </div>
+        <div id="upload-progress" class="hidden">
+          <div class="progress-bar"><div id="upload-bar"></div></div>
+          <span id="upload-label"></span>
+        </div>
+        <div id="drop-zone" class="drop-zone">Arraste vídeos aqui para enviar</div>
+        <div id="video-list" class="list"></div>
+      </section>
+
+      <!-- CANAIS -->
+      <section id="tab-channels" class="tab hidden">
+        <div class="toolbar">
+          <h2>Canais (playlist em loop)</h2>
+          <button id="new-channel-btn" class="btn primary">➕ Novo canal</button>
+        </div>
+        <div id="channel-list" class="list"></div>
+      </section>
+
+      <!-- RELAYS -->
+      <section id="tab-relays" class="tab hidden">
+        <div class="toolbar">
+          <h2>Relays (HTTP/HLS/RTMP → RTMP)</h2>
+          <button id="new-relay-btn" class="btn primary">➕ Novo relay</button>
+        </div>
+        <div id="relay-list" class="list"></div>
+      </section>
+
+      <!-- ENTRADAS -->
+      <section id="tab-inputs" class="tab hidden">
+        <div class="toolbar">
+          <h2>Entradas ao vivo (OBS / encoder)</h2>
+          <button id="new-input-btn" class="btn primary">➕ Nova entrada</button>
+        </div>
+        <p class="muted">Crie uma chave, configure seu OBS para publicar nela e distribua o link de reprodução gerado.</p>
+        <div id="input-list" class="list"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal genérico -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div id="modal" class="modal"></div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "rtmp-panel",
+  "version": "1.0.0",
+  "description": "Servidor RTMP com painel web de gerência: playlists de vídeos em loop, relays HTTP->RTMP e entradas ao vivo",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "node-media-server": "^2.7.4"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,16 @@
+services:
+  rtmp-panel:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"   # painel web
+      - "1935:1935"   # RTMP
+      - "8000:8000"   # HTTP-FLV
+    environment:
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-admin}
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+    volumes:
+      - ./data:/app/data
+      - ./media:/app/media
