@@ -26,6 +26,8 @@ services:
       NORMALIZE_PRESET: ${NORMALIZE_PRESET:-veryfast}
       NORMALIZE_THREADS: ${NORMALIZE_THREADS:-}
       NORMALIZE_CONCURRENCY: ${NORMALIZE_CONCURRENCY:-1}
+      # Cookies para YouTube (coloque o arquivo em ./data e aponte o caminho)
+      YTDLP_COOKIES: ${YTDLP_COOKIES:-}
     volumes:
       - ./data:/app/data
       - ./media:/app/media

@@ -72,9 +72,11 @@ function fmtUptime(ms) {
 }
 
 function statusBadge(st) {
-  const labels = { running: 'NO AR', stopped: 'PARADO', restarting: 'REINICIANDO', starting: 'INICIANDO', error: 'ERRO' };
+  const labels = { running: 'NO AR', stopped: 'PARADO', restarting: 'REINICIANDO', starting: 'INICIANDO', downloading: 'BAIXANDO', error: 'ERRO' };
   return `<span class="badge ${esc(st)}">${labels[st] || esc(st)}</span>`;
 }
+
+const ACTIVE_STATUSES = ['running', 'restarting', 'starting', 'downloading'];
 
 // Velocidade do ffmpeg: 1.0x = tempo real. Abaixo disso a CPU não acompanha
 // e o stream trava — mostramos o alerta para diagnóstico.
@@ -290,7 +292,7 @@ async function loadChannels() {
     ? '<p class="muted">Nenhum canal criado. Crie um canal e monte sua playlist.</p>'
     : channels.map((c) => {
         const u = urls(c.key);
-        const running = ['running', 'restarting', 'starting'].includes(c.status);
+        const running = ACTIVE_STATUSES.includes(c.status);
         return `<div class="item">
           <div class="item-head">
             <span class="item-title">📺 ${esc(c.name)}</span>
@@ -450,7 +452,7 @@ async function loadRelays() {
     ? '<p class="muted">Nenhum relay criado. Adicione um link HTTP/HLS para retransmitir via RTMP.</p>'
     : relays.map((r) => {
         const u = urls(r.key);
-        const running = ['running', 'restarting', 'starting'].includes(r.status);
+        const running = ACTIVE_STATUSES.includes(r.status);
         return `<div class="item">
           <div class="item-head">
             <span class="item-title">🔁 ${esc(r.name)}</span>
@@ -467,17 +469,20 @@ async function loadRelays() {
             </div>
           </div>
           <div class="item-sub">Origem: ${esc(r.sourceUrl)}</div>
-          <div class="item-sub">${r.mode === 'copy' ? 'cópia direta' : `transcode ${esc(r.resolution)}`}${r.loop ? ' · 🔁 loop' : ''}${r.autostart ? ' · ⏯ autostart' : ''}${r.restarts ? ` · ${r.restarts} restart(s)` : ''}${speedInfo(r)}</div>
+          <div class="item-sub">${r.mode === 'copy' ? 'cópia direta' : `transcode ${esc(r.resolution)}`}${r.ytdlp ? ' · ▶️ yt-dlp' : ''}${r.loop ? ' · 🔁 loop' : ''}${r.autostart ? ' · ⏯ autostart' : ''}${r.restarts ? ` · ${r.restarts} restart(s)` : ''}${speedInfo(r)}</div>
           ${urlRow('RTMP', u.rtmp)}${urlRow('FLV', u.flv)}
         </div>`;
       }).join('');
 }
 
+const YTDLP_RE = /(youtube\.com|youtu\.be|twitch\.tv|kick\.com|dailymotion\.com|vimeo\.com)/i;
+
 function relayForm(r = {}) {
   return `
     <div class="form-row"><label>Nome</label><input type="text" id="rl-name" value="${esc(r.name || '')}" placeholder="Ex.: Canal de notícias"></div>
-    <div class="form-row"><label>URL de origem (http, hls, rtmp, rtsp, srt, udp)</label>
-      <input type="text" id="rl-url" value="${esc(r.sourceUrl || '')}" placeholder="https://exemplo.com/stream.m3u8"></div>
+    <div class="form-row"><label>URL de origem (YouTube, http, hls, rtmp, rtsp, srt, udp)</label>
+      <input type="text" id="rl-url" value="${esc(r.sourceUrl || '')}" placeholder="https://youtube.com/watch?v=... ou https://exemplo.com/stream.m3u8"></div>
+    <div class="form-row checkbox-row"><input type="checkbox" id="rl-ytdlp" ${r.ytdlp ? 'checked' : ''}><label for="rl-ytdlp">▶️ Resolver com yt-dlp (YouTube, Twitch, Vimeo... — marcado automaticamente)</label></div>
     <div class="form-grid">
       <div class="form-row"><label>Modo</label>
         <select id="rl-mode">
@@ -499,11 +504,19 @@ function readRelayForm() {
   return {
     name: $('#rl-name').value,
     sourceUrl: $('#rl-url').value,
+    ytdlp: $('#rl-ytdlp').checked,
     mode: $('#rl-mode').value,
     resolution: $('#rl-res').value,
     loop: $('#rl-loop').checked,
     autostart: $('#rl-autostart').checked
   };
+}
+
+// Marca o yt-dlp sozinho quando o usuário cola um link de site suportado
+function wireYtdlpAutodetect() {
+  $('#rl-url').addEventListener('input', () => {
+    $('#rl-ytdlp').checked = YTDLP_RE.test($('#rl-url').value);
+  });
 }
 
 $('#new-relay-btn').addEventListener('click', () => {
@@ -512,6 +525,7 @@ $('#new-relay-btn').addEventListener('click', () => {
       <button class="btn" id="modal-cancel">Cancelar</button>
       <button class="btn primary" id="rl-save">Criar</button>
     </div>`);
+  wireYtdlpAutodetect();
   $('#modal-cancel').addEventListener('click', closeModal);
   $('#rl-save').addEventListener('click', async () => {
     try {
@@ -530,6 +544,7 @@ async function editRelay(id) {
       <button class="btn" id="modal-cancel">Cancelar</button>
       <button class="btn primary" id="rl-save">Salvar</button>
     </div>`);
+  wireYtdlpAutodetect();
   $('#modal-cancel').addEventListener('click', closeModal);
   $('#rl-save').addEventListener('click', async () => {
     try {

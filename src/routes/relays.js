@@ -1,5 +1,8 @@
-// Relays: pegam uma fonte HTTP/HLS/RTMP/RTSP e retransmitem via RTMP local.
+// Relays: pegam uma fonte HTTP/HLS/RTMP/RTSP/YouTube e retransmitem via RTMP local.
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const config = require('../config');
 const db = require('../db');
 const sm = require('../streamManager');
 
@@ -22,18 +25,22 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'URL de origem inválida (use http(s)://, rtmp://, rtsp://, srt:// ou udp://)' });
   }
   const state = db.get();
+  const b = req.body || {};
+  const cleanUrl = String(sourceUrl).trim();
   const relay = {
     id: db.id(),
     name: String(name).trim(),
     key: db.streamKey(),
-    sourceUrl: String(sourceUrl).trim(),
-    mode: 'copy',        // 'copy' | 'transcode'
-    loop: false,         // true para fontes VOD (arquivo de vídeo via http)
-    resolution: '1280x720',
+    sourceUrl: cleanUrl,
+    // Links de página (YouTube, Twitch...) são resolvidos pelo yt-dlp
+    ytdlp: typeof b.ytdlp === 'boolean' ? b.ytdlp : sm.isYtdlpUrl(cleanUrl),
+    mode: b.mode === 'transcode' ? 'transcode' : 'copy',
+    loop: b.loop === true,   // true para fontes VOD (repete indefinidamente)
+    resolution: typeof b.resolution === 'string' && /^\d{2,5}x\d{2,5}$/.test(b.resolution) ? b.resolution : '1280x720',
     videoBitrate: '2500k',
     audioBitrate: '128k',
     fps: 30,
-    autostart: false,
+    autostart: b.autostart === true,
     createdAt: new Date().toISOString()
   };
   state.relays.push(relay);
@@ -48,7 +55,12 @@ router.patch('/:id', async (req, res) => {
 
   const b = req.body || {};
   if (typeof b.name === 'string' && b.name.trim()) relay.name = b.name.trim();
-  if (typeof b.sourceUrl === 'string' && URL_RE.test(b.sourceUrl.trim())) relay.sourceUrl = b.sourceUrl.trim();
+  if (typeof b.sourceUrl === 'string' && URL_RE.test(b.sourceUrl.trim())) {
+    relay.sourceUrl = b.sourceUrl.trim();
+    // URL trocada sem definir ytdlp explicitamente: re-detecta
+    if (typeof b.ytdlp !== 'boolean') relay.ytdlp = sm.isYtdlpUrl(relay.sourceUrl);
+  }
+  if (typeof b.ytdlp === 'boolean') relay.ytdlp = b.ytdlp;
   if (b.mode === 'transcode' || b.mode === 'copy') relay.mode = b.mode;
   if (['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].includes(b.preset)) relay.preset = b.preset;
   if (typeof b.loop === 'boolean') relay.loop = b.loop;
@@ -83,6 +95,12 @@ router.delete('/:id', async (req, res) => {
   if (idx === -1) return res.status(404).json({ error: 'Relay não encontrado' });
   sm.stop(req.params.id);
   state.relays.splice(idx, 1);
+  // Remove vídeos do YouTube em cache deste relay
+  try {
+    for (const f of fs.readdirSync(config.CACHE_DIR)) {
+      if (f.startsWith(req.params.id + '-')) fs.unlink(path.join(config.CACHE_DIR, f), () => {});
+    }
+  } catch {}
   await db.save();
   res.json({ ok: true });
 });

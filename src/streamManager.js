@@ -3,7 +3,7 @@
 // travamento (reinicia se o ffmpeg parar de produzir frames), estatísticas em
 // tempo real (velocidade/fps/bitrate via -progress) e guarda as últimas linhas
 // de log para exibição no painel.
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -128,34 +128,144 @@ function buildChannelArgs(channel) {
   return args;
 }
 
-function buildRelayArgs(relay) {
+// Sites que precisam do yt-dlp para extrair a URL de mídia real.
+function isYtdlpUrl(url) {
+  return /(youtube\.com|youtu\.be|twitch\.tv|kick\.com|dailymotion\.com|vimeo\.com)/i.test(url || '');
+}
+
+// Flags comuns a toda chamada do yt-dlp.
+function ytdlpBaseArgs() {
+  const args = ['--no-playlist', '--no-warnings', '--socket-timeout', '30'];
+  if (config.YTDLP_COOKIES) args.push('--cookies', config.YTDLP_COOKIES);
+  return args;
+}
+
+// Pergunta ao yt-dlp se o link é uma transmissão ao vivo ou um vídeo (VOD).
+function ytdlpIsLive(pageUrl) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      config.YTDLP_PATH,
+      [...ytdlpBaseArgs(), '--print', 'is_live', pageUrl],
+      { timeout: 60000, maxBuffer: 256 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          const reason = (stderr || err.message).trim().split('\n').pop() || 'falha desconhecida';
+          return reject(new Error(`yt-dlp: ${reason}`));
+        }
+        resolve(stdout.trim().split('\n')[0] === 'True');
+      }
+    );
+  });
+}
+
+// Baixa um VOD do YouTube uma única vez para o cache local. Streaming de URL
+// resolvida direto no ffmpeg leva 403 (o YouTube amarra a URL ao cliente que
+// resolveu o desafio anti-bot) — quem baixa precisa ser o próprio yt-dlp.
+// O arquivo em cache também elimina re-downloads a cada loop/restart.
+function ensureVodCached(relay, entry) {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(config.CACHE_DIR, { recursive: true });
+    const hash = require('crypto').createHash('md5').update(relay.sourceUrl).digest('hex').slice(0, 10);
+    const file = path.join(config.CACHE_DIR, `${relay.id}-${hash}.mp4`);
+    if (fs.existsSync(file)) return resolve(file);
+
+    // URL do relay mudou: descarta o cache da URL antiga
+    for (const f of fs.readdirSync(config.CACHE_DIR)) {
+      if (f.startsWith(relay.id + '-')) fs.unlink(path.join(config.CACHE_DIR, f), () => {});
+    }
+
+    entry.status = 'downloading';
+    pushLog(entry, 'Baixando vídeo com yt-dlp (apenas na primeira vez)...');
+    let proc;
+    try {
+      proc = spawn(config.YTDLP_PATH, [
+        ...ytdlpBaseArgs(), '--no-progress',
+        '-f', config.YTDLP_FORMAT, '--merge-output-format', 'mp4',
+        '-o', file, relay.sourceUrl
+      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (err) {
+      return reject(new Error(`yt-dlp: ${err.message}`));
+    }
+    entry.helper = proc;
+    // Download em prioridade baixa, como a normalização
+    try { os.setPriority(proc.pid, 10); } catch {}
+
+    let tail = '';
+    proc.stderr.on('data', (d) => { tail = (tail + d.toString()).slice(-600); });
+    proc.on('error', (err) => {
+      entry.helper = null;
+      reject(new Error(`yt-dlp: ${err.message} (yt-dlp instalado?)`));
+    });
+    proc.on('exit', (code) => {
+      entry.helper = null;
+      if (code === 0 && fs.existsSync(file)) {
+        pushLog(entry, 'Download concluído — usando o cache local daqui em diante.');
+        return resolve(file);
+      }
+      reject(new Error(`yt-dlp: ${tail.trim().split('\n').pop() || `download falhou (code=${code})`}`));
+    });
+  });
+}
+
+function httpInputFlags() {
+  return [
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '10',
+    // Derruba conexões mortas em 15s; o auto-restart religa em seguida
+    '-rw_timeout', '15000000'
+  ];
+}
+
+// Monta o plano de execução do relay: { args } ou { args, helper } quando o
+// yt-dlp alimenta o ffmpeg via pipe (lives).
+async function buildRelayArgs(relay, entry) {
   const args = [
     '-hide_banner', '-loglevel', 'warning',
     '-nostats', '-progress', 'pipe:1'
   ];
-  // Para fontes VOD (arquivo http) usamos -re para ritmo de tempo real;
-  // -stream_loop -1 repete a fonte indefinidamente quando "loop" está ativo.
-  if (relay.loop) args.push('-re', '-stream_loop', '-1');
-  if (/^https?:\/\//i.test(relay.sourceUrl)) {
-    args.push(
-      '-reconnect', '1',
-      '-reconnect_streamed', '1',
-      '-reconnect_delay_max', '10',
-      // Derruba conexões mortas em 15s; o auto-restart religa em seguida
-      '-rw_timeout', '15000000'
-    );
-  } else if (/^rtsp:\/\//i.test(relay.sourceUrl)) {
-    // TCP evita perda de pacotes (vídeo picotado) comum no RTSP via UDP
-    args.push('-rtsp_transport', 'tcp');
+  let helper = null;
+
+  if (relay.ytdlp) {
+    const isLive = await ytdlpIsLive(relay.sourceUrl);
+    if (isLive) {
+      // Live: o yt-dlp baixa o stream (com toda a lógica de headers/anti-bot)
+      // e entrega ao ffmpeg pela entrada padrão.
+      args.push('-i', 'pipe:0');
+      helper = {
+        cmd: config.YTDLP_PATH,
+        args: [
+          ...ytdlpBaseArgs(), '--no-progress',
+          '-f', config.YTDLP_LIVE_FORMAT, '-o', '-', relay.sourceUrl
+        ]
+      };
+    } else {
+      // VOD: baixa uma única vez para o cache e transmite o arquivo local.
+      const file = await ensureVodCached(relay, entry);
+      args.push('-re');
+      if (relay.loop) args.push('-stream_loop', '-1');
+      args.push('-i', file);
+    }
+  } else {
+    // Para fontes VOD (arquivo http) usamos -re para ritmo de tempo real;
+    // -stream_loop -1 repete a fonte indefinidamente quando "loop" está ativo.
+    if (relay.loop) args.push('-re', '-stream_loop', '-1');
+    if (/^https?:\/\//i.test(relay.sourceUrl)) {
+      args.push(...httpInputFlags());
+    } else if (/^rtsp:\/\//i.test(relay.sourceUrl)) {
+      // TCP evita perda de pacotes (vídeo picotado) comum no RTSP via UDP
+      args.push('-rtsp_transport', 'tcp');
+    }
+    args.push('-i', relay.sourceUrl);
   }
-  args.push('-i', relay.sourceUrl);
+
   if (relay.mode === 'transcode') {
     args.push(...transcodeArgs(relay));
   } else {
     args.push('-c', 'copy');
   }
   args.push(...outputArgs(relay.key));
-  return args;
+  return { args, helper };
 }
 
 // Consome as linhas key=value do -progress (stdout) e atualiza as estatísticas
@@ -196,44 +306,95 @@ function stopWatchdog(entry) {
   }
 }
 
-function spawnStream(id, type, buildArgs, getItem) {
+// Agenda nova tentativa com backoff exponencial (queda do ffmpeg ou falha
+// ao resolver a origem).
+function scheduleRetry(entry, id, type, buildArgs, getItem) {
+  entry.status = 'restarting';
+  entry.restarts += 1;
+  const wait = entry.backoff;
+  entry.backoff = Math.min(entry.backoff * 2, MAX_BACKOFF_MS);
+  pushLog(entry, `Nova tentativa em ${Math.round(wait / 1000)}s...`);
+  entry.retryTimer = setTimeout(() => {
+    if (!entry.stopping) spawnStream(id, type, buildArgs, getItem);
+  }, wait);
+}
+
+async function spawnStream(id, type, buildArgs, getItem) {
   const existing = running.get(id);
   const entry = existing || {
-    proc: null, type, status: 'starting', startedAt: null,
+    proc: null, helper: null, type, status: 'starting', startedAt: null,
     restarts: 0, backoff: 1000, logs: [], stopping: false,
     retryTimer: null, watchdog: null, lastProgressAt: 0, stats: {}
   };
   entry.type = type;
+  entry.status = 'starting';
   entry.stopping = false;
   running.set(id, entry);
 
   const item = getItem();
   if (!item) { stopWatchdog(entry); running.delete(id); return; }
 
-  let args;
+  let plan;
   try {
-    args = buildArgs(item);
+    // Pode envolver rede/disco (yt-dlp consulta ou baixa a origem)
+    plan = await buildArgs(item, entry);
   } catch (err) {
-    entry.status = 'error';
-    pushLog(entry, `Erro ao montar comando: ${err.message}`);
+    pushLog(entry, `Erro ao preparar origem: ${err.message}`);
+    if (!entry.stopping) scheduleRetry(entry, id, type, buildArgs, getItem);
     return;
   }
-  if (!args) {
+  // O usuário pode ter parado o stream enquanto a origem era preparada
+  if (entry.stopping) {
+    entry.status = 'stopped';
+    running.delete(id);
+    return;
+  }
+  if (Array.isArray(plan)) plan = { args: plan, helper: null };
+  if (!plan) {
     entry.status = 'error';
     pushLog(entry, item.mode === 'normalized'
       ? 'Nenhum vídeo normalizado pronto — aguarde a normalização concluir (aba Vídeos).'
       : 'Playlist vazia — adicione vídeos ao canal antes de iniciar.');
     return;
   }
+  const args = plan.args;
 
   pushLog(entry, `Iniciando: ${config.FFMPEG_PATH} ${args.join(' ')}`);
   let proc;
   try {
-    proc = spawn(config.FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    proc = spawn(config.FFMPEG_PATH, args, {
+      stdio: [plan.helper ? 'pipe' : 'ignore', 'pipe', 'pipe']
+    });
   } catch (err) {
     entry.status = 'error';
     pushLog(entry, `Falha ao iniciar ffmpeg: ${err.message}`);
     return;
+  }
+
+  // Processo auxiliar (yt-dlp) alimentando o ffmpeg via pipe
+  if (plan.helper) {
+    pushLog(entry, `Origem via ${plan.helper.cmd} ${plan.helper.args.join(' ')}`);
+    let helper = null;
+    try {
+      helper = spawn(plan.helper.cmd, plan.helper.args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      pushLog(entry, `Falha ao iniciar yt-dlp: ${err.message}`);
+    }
+    if (helper) {
+      entry.helper = helper;
+      try { os.setPriority(helper.pid, -5); } catch {}
+      proc.stdin.on('error', () => {});           // ffmpeg pode sair primeiro (EPIPE)
+      helper.stdout.pipe(proc.stdin);
+      helper.stderr.on('data', (d) => pushLog(entry, d));
+      helper.on('error', (err) => pushLog(entry, `yt-dlp: ${err.message} (yt-dlp instalado?)`));
+      helper.on('exit', (code) => {
+        if (entry.helper === helper) entry.helper = null;
+        // EOF no stdin encerra o ffmpeg; o auto-restart reconecta (ex.: live caiu)
+        pushLog(entry, `yt-dlp encerrou (code=${code})`);
+      });
+    } else {
+      try { proc.kill('SIGKILL'); } catch {}
+    }
   }
 
   entry.proc = proc;
@@ -259,6 +420,10 @@ function spawnStream(id, type, buildArgs, getItem) {
     entry.proc = null;
     entry.stats = {};
     stopWatchdog(entry);
+    if (entry.helper) {
+      try { entry.helper.kill('SIGKILL'); } catch {}
+      entry.helper = null;
+    }
     pushLog(entry, `ffmpeg encerrou (code=${code} signal=${signal || '-'})`);
     if (entry.stopping) {
       entry.status = 'stopped';
@@ -268,14 +433,7 @@ function spawnStream(id, type, buildArgs, getItem) {
     // Auto-restart com backoff. Se rodou por um bom tempo, zera o backoff.
     const ranMs = Date.now() - entry.startedAt;
     if (ranMs > 60000) entry.backoff = 1000;
-    entry.status = 'restarting';
-    entry.restarts += 1;
-    const wait = entry.backoff;
-    entry.backoff = Math.min(entry.backoff * 2, MAX_BACKOFF_MS);
-    pushLog(entry, `Reiniciando em ${Math.round(wait / 1000)}s...`);
-    entry.retryTimer = setTimeout(() => {
-      if (!entry.stopping) spawnStream(id, type, buildArgs, getItem);
-    }, wait);
+    scheduleRetry(entry, id, type, buildArgs, getItem);
   });
 }
 
@@ -297,6 +455,10 @@ function stop(id) {
   entry.stopping = true;
   if (entry.retryTimer) clearTimeout(entry.retryTimer);
   stopWatchdog(entry);
+  if (entry.helper) {
+    try { entry.helper.kill('SIGKILL'); } catch {}
+    entry.helper = null;
+  }
   if (entry.proc) {
     entry.proc.kill('SIGTERM');
     const proc = entry.proc;
@@ -334,7 +496,7 @@ function statusOf(id) {
 
 function isRunning(id) {
   const entry = running.get(id);
-  return !!entry && (entry.status === 'running' || entry.status === 'restarting' || entry.status === 'starting');
+  return !!entry && ['running', 'restarting', 'starting', 'downloading'].includes(entry.status);
 }
 
 // Sobe tudo que estava marcado como autostart.
@@ -358,5 +520,5 @@ function shutdown() {
 
 module.exports = {
   startChannel, startRelay, stop, restartIfRunning,
-  statusOf, isRunning, autostartAll, shutdown
+  statusOf, isRunning, autostartAll, shutdown, isYtdlpUrl
 };

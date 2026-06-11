@@ -5,6 +5,7 @@ Servidor RTMP com painel de gerência web. Permite:
 - **🎬 Acervo de vídeos** — upload de vídeos pelo painel (drag & drop, multi-arquivo, barra de progresso)
 - **📺 Canais (playlist em loop)** — monte uma playlist com os vídeos enviados e o servidor gera um link RTMP que reproduz tudo em loop infinito, 24/7, como um canal de TV
 - **🔁 Relays** — informe um link HTTP/HLS/RTMP/RTSP/SRT/UDP e ele é retransmitido como um novo link RTMP (com opção de loop para VOD)
+- **▶️ YouTube/Twitch** — cole o link de um vídeo ou live e o relay resolve a mídia real via yt-dlp automaticamente, renovando o link a cada reinício
 - **🎥 Entradas ao vivo** — gere chaves de stream para publicar do OBS/encoder e distribuir pelo link gerado
 - **👁 Preview no navegador** — assista qualquer stream direto no painel (HTTP-FLV + flv.js)
 - **📜 Logs em tempo real** — veja a saída do FFmpeg de cada canal/relay no painel
@@ -22,6 +23,13 @@ Servidor RTMP com painel de gerência web. Permite:
   # Debian/Ubuntu
   sudo apt install ffmpeg
   ```
+- **yt-dlp** (opcional, só para relays de YouTube/Twitch). Instale o binário oficial e mantenha atualizado — versões antigas param de extrair do YouTube:
+  ```bash
+  sudo wget -qO /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+  sudo chmod +x /usr/local/bin/yt-dlp
+  # para atualizar depois: sudo yt-dlp -U
+  ```
+  (No Docker já vem incluído.)
 
 ## Instalação
 
@@ -51,6 +59,11 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
 2. **Crie um canal** na aba *Canais*, adicione os vídeos na ordem desejada e clique em **Iniciar**.
 3. Copie o link **RTMP** gerado — ele fica reproduzindo a playlist em loop. Use em qualquer player (VLC: *Mídia → Abrir transmissão de rede*) ou aponte como fonte para outra plataforma.
 4. Para **retransmitir um link HTTP** (m3u8, mp4, outra live), crie um *Relay* com a URL de origem — o painel gera o link RTMP de saída. Marque *loop* se a origem for um arquivo de vídeo.
+5. Para **retransmitir do YouTube/Twitch**, cole o link da página (vídeo ou live) no relay — a opção *yt-dlp* é marcada automaticamente.
+   - **Lives**: o yt-dlp baixa a transmissão e alimenta o FFmpeg em tempo real; se a live cair, o relay fica tentando reconectar sozinho.
+   - **Vídeos**: são baixados **uma única vez** para o cache local (`media/cache/`, na melhor qualidade H.264 até 1080p) e transmitidos de lá — sem links expirando nem re-downloads a cada loop. O status mostra "BAIXANDO" durante o download. O cache é apagado quando o relay é excluído.
+   - **Retransmita apenas conteúdo que você tem direito de redistribuir.**
+   - Se o YouTube bloquear o IP do servidor (erro 403 ou "Sign in to confirm you're not a bot" — comum em VPS/datacenter), exporte os cookies do seu navegador (extensão "Get cookies.txt"), salve em `./data/cookies.txt` e defina `YTDLP_COOKIES=/app/data/cookies.txt` no `.env`.
 5. Para **transmitir ao vivo do OBS**, crie uma *Entrada*, configure o OBS com o servidor `rtmp://SEU_IP:1935/live` e a chave gerada.
 
 ### Modos de saída dos canais
@@ -70,6 +83,11 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
 | `ADMIN_USER` / `ADMIN_PASS` | `admin` / `admin` | Credenciais do painel |
 | `SESSION_SECRET` | *(aleatório)* | Segredo do cookie de sessão (defina para manter login entre restarts) |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe` | Caminho dos binários |
+| `YTDLP_PATH` | `yt-dlp` | Caminho do yt-dlp (relays de YouTube/Twitch) |
+| `YTDLP_FORMAT` | *(H.264+AAC ≤1080p)* | Seletor de formato do yt-dlp (VOD) |
+| `YTDLP_LIVE_FORMAT` | `b` | Seletor de formato para lives |
+| `YTDLP_COOKIES` | *(vazio)* | Arquivo de cookies para IPs bloqueados pelo YouTube |
+| `CACHE_DIR` | `media/cache` | Cache dos vídeos baixados do YouTube |
 | `MAX_UPLOAD_MB` | `4096` | Tamanho máximo por arquivo de upload |
 | `ALLOW_ANY_PUBLISH` | `false` | Aceitar publicação RTMP com qualquer chave |
 | `STALL_TIMEOUT_SEC` | `45` | Watchdog: reinicia o ffmpeg se ficar este tempo sem progresso (`0` desativa) |

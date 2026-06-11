@@ -36,6 +36,20 @@ module.exports = {
   // Binários
   FFMPEG_PATH: process.env.FFMPEG_PATH || 'ffmpeg',
   FFPROBE_PATH: process.env.FFPROBE_PATH || 'ffprobe',
+  YTDLP_PATH: process.env.YTDLP_PATH || 'yt-dlp',
+
+  // Seleção de formato do yt-dlp: prioriza H.264+AAC até 1080p para que o
+  // modo "cópia direta" funcione sem transcodificar (FLV exige H.264/AAC).
+  YTDLP_FORMAT: process.env.YTDLP_FORMAT ||
+    'bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/b[vcodec^=avc1][height<=1080]/b',
+  // Lives são enviadas por pipe (sem merge), então o formato deve ser único
+  YTDLP_LIVE_FORMAT: process.env.YTDLP_LIVE_FORMAT || 'b',
+  // Arquivo de cookies (formato Netscape) para o yt-dlp — necessário quando o
+  // YouTube bloqueia o IP do servidor (comum em VPS/datacenter)
+  YTDLP_COOKIES: process.env.YTDLP_COOKIES || '',
+
+  // Cache local dos vídeos baixados do YouTube (VOD é baixado uma única vez)
+  CACHE_DIR: process.env.CACHE_DIR || path.join(ROOT, 'media', 'cache'),
 
   // Diretórios
   DATA_DIR: process.env.DATA_DIR || path.join(ROOT, 'data'),
