@@ -76,6 +76,21 @@ function statusBadge(st) {
   return `<span class="badge ${esc(st)}">${labels[st] || esc(st)}</span>`;
 }
 
+// Velocidade do ffmpeg: 1.0x = tempo real. Abaixo disso a CPU não acompanha
+// e o stream trava — mostramos o alerta para diagnóstico.
+function speedInfo(item) {
+  const s = (item.stats || {}).speed;
+  if (item.status !== 'running' || s == null) return '';
+  if (s < 0.95) {
+    return ` · <span style="color:var(--red)" title="A CPU não está acompanhando o tempo real — o stream vai travar. Use o modo Normalizado, reduza resolução/bitrate ou um preset mais rápido.">⚠️ ${s.toFixed(2)}x</span>`;
+  }
+  return ` · ${s.toFixed(2)}x`;
+}
+
+function modeLabel(mode) {
+  return { normalized: '⚡ normalizado (CPU mínima)', transcode: 'transcode ao vivo', copy: 'cópia direta' }[mode] || mode;
+}
+
 function urlRow(tag, url) {
   return `<div class="url-row"><span class="tag">${esc(tag)}</span><code>${esc(url)}</code>
     <button class="btn small" data-copy="${esc(url)}">📋</button></div>`;
@@ -162,11 +177,16 @@ async function refreshAll() {
 async function loadDashboard() {
   const st = await api('/status');
   serverInfo = st.server;
+  const loadPct = st.server.cpus ? Math.round((st.server.load / st.server.cpus) * 100) : 0;
+  const loadWarn = loadPct >= 85;
   $('#dash-cards').innerHTML = `
     <div class="card"><div class="num">${st.live.length}</div><div class="label">Streams no ar</div></div>
     <div class="card"><div class="num">${st.counts.videos}</div><div class="label">Vídeos</div></div>
     <div class="card"><div class="num">${st.counts.channels}</div><div class="label">Canais</div></div>
     <div class="card"><div class="num">${st.counts.relays}</div><div class="label">Relays</div></div>
+    <div class="card"><div class="num" ${loadWarn ? 'style="color:var(--red)"' : ''}>${loadPct}%</div>
+      <div class="label">CPU (${(st.server.load || 0).toFixed(1)} / ${st.server.cpus} núcleos)${loadWarn ? ' ⚠️' : ''}</div></div>
+    <div class="card"><div class="num">${st.server.memUsedPct}%</div><div class="label">Memória</div></div>
     <div class="card"><div class="num">${fmtDuration(st.server.uptime)}</div><div class="label">Uptime do servidor</div></div>`;
 
   $('#live-list').innerHTML = st.live.length === 0
@@ -187,6 +207,20 @@ async function loadDashboard() {
 
 /* ---------- vídeos ---------- */
 
+function normBadge(v) {
+  const n = v.normalized || {};
+  const map = {
+    ready: ['running', '✅ normalizado'],
+    processing: ['starting', '⚙️ normalizando...'],
+    pending: ['stopped', '⏳ na fila'],
+    error: ['error', '❌ erro na normalização']
+  };
+  const m = map[n.status];
+  if (!m) return '';
+  const tip = n.status === 'error' && n.error ? ` title="${esc(n.error)}"` : '';
+  return `<span class="badge ${m[0]}"${tip}>${m[1]}</span>`;
+}
+
 async function loadVideos() {
   const videos = await api('/videos');
   $('#video-list').innerHTML = videos.length === 0
@@ -195,8 +229,10 @@ async function loadVideos() {
       <div class="item">
         <div class="item-head">
           <span class="item-title">🎬 ${esc(v.name)}</span>
+          ${normBadge(v)}
           <span class="muted">${fmtBytes(v.size)} · ${fmtDuration(v.duration)}</span>
           <div class="item-actions">
+            ${(v.normalized || {}).status === 'error' ? `<button class="btn small" data-renorm-video="${v.id}">🔄 Tentar de novo</button>` : ''}
             <button class="btn small" data-rename-video="${v.id}" data-name="${esc(v.name)}">✏️</button>
             <button class="btn small danger" data-del-video="${v.id}">🗑️</button>
           </div>
@@ -271,9 +307,10 @@ async function loadChannels() {
             </div>
           </div>
           <div class="item-sub">
-            ${(c.videoIds || []).length} vídeo(s) · ${c.mode === 'copy' ? 'cópia direta' : `transcode ${esc(c.resolution)} @ ${esc(c.videoBitrate)}`}
-            ${c.shuffle ? ' · 🔀 aleatório' : ''}${c.autostart ? ' · ⚡ autostart' : ''}
-            ${c.restarts ? ` · ${c.restarts} restart(s)` : ''}
+            ${(c.videoIds || []).length} vídeo(s)${c.mode === 'normalized' && c.readyCount < (c.videoIds || []).length ? ` <span style="color:var(--yellow)">(${c.readyCount} normalizados)</span>` : ''}
+            · ${modeLabel(c.mode)}${c.mode === 'transcode' ? ` ${esc(c.resolution)} @ ${esc(c.videoBitrate)}` : ''}
+            ${c.shuffle ? ' · 🔀 aleatório' : ''}${c.autostart ? ' · ⏯ autostart' : ''}
+            ${c.restarts ? ` · ${c.restarts} restart(s)` : ''}${speedInfo(c)}
           </div>
           ${urlRow('RTMP', u.rtmp)}${urlRow('FLV', u.flv)}
         </div>`;
@@ -319,13 +356,14 @@ async function editChannel(id) {
         ${videos.map((v) => `<label><input type="checkbox" data-add-video="${v.id}"> ${esc(v.name)} <span class="muted">(${fmtDuration(v.duration)})</span></label>`).join('') || '<p class="muted">Envie vídeos na aba Vídeos primeiro.</p>'}
       </div>
     </div>
-    <div class="form-grid">
-      <div class="form-row"><label>Modo</label>
-        <select id="ch-mode">
-          <option value="transcode" ${c.mode === 'transcode' ? 'selected' : ''}>Transcodificar (compatível)</option>
-          <option value="copy" ${c.mode === 'copy' ? 'selected' : ''}>Cópia direta (exige codecs iguais)</option>
-        </select>
-      </div>
+    <div class="form-row"><label>Modo de saída</label>
+      <select id="ch-mode">
+        <option value="normalized" ${c.mode === 'normalized' ? 'selected' : ''}>⚡ Normalizado — recomendado, CPU mínima (usa os vídeos pré-convertidos)</option>
+        <option value="transcode" ${c.mode === 'transcode' ? 'selected' : ''}>Transcodificar ao vivo — re-encoda 24/7, alto uso de CPU</option>
+        <option value="copy" ${c.mode === 'copy' ? 'selected' : ''}>Cópia direta dos originais — exige codecs idênticos (avançado)</option>
+      </select>
+    </div>
+    <div class="form-grid" id="ch-transcode-opts">
       <div class="form-row"><label>Resolução</label>
         <select id="ch-res">
           ${['1920x1080', '1280x720', '854x480', '640x360'].map((r) => `<option ${c.resolution === r ? 'selected' : ''}>${r}</option>`).join('')}
@@ -339,6 +377,11 @@ async function editChannel(id) {
       <div class="form-row"><label>FPS</label>
         <select id="ch-fps">
           ${[24, 30, 60].map((f) => `<option ${c.fps === f ? 'selected' : ''}>${f}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-row"><label>Preset x264 (mais rápido = menos CPU)</label>
+        <select id="ch-preset">
+          ${['ultrafast', 'superfast', 'veryfast', 'faster', 'fast'].map((p) => `<option ${(c.preset || 'veryfast') === p ? 'selected' : ''}>${p}</option>`).join('')}
         </select>
       </div>
     </div>
@@ -368,6 +411,13 @@ async function editChannel(id) {
     });
   });
 
+  // Opções de transcode só fazem sentido no modo "transcode"
+  const syncTranscodeOpts = () => {
+    $('#ch-transcode-opts').style.display = $('#ch-mode').value === 'transcode' ? '' : 'none';
+  };
+  $('#ch-mode').addEventListener('change', syncTranscodeOpts);
+  syncTranscodeOpts();
+
   $('#modal-cancel').addEventListener('click', closeModal);
   $('#ch-save').addEventListener('click', async () => {
     try {
@@ -380,6 +430,7 @@ async function editChannel(id) {
           resolution: $('#ch-res').value,
           videoBitrate: $('#ch-vb').value,
           fps: parseInt($('#ch-fps').value, 10),
+          preset: $('#ch-preset').value,
           shuffle: $('#ch-shuffle').checked,
           autostart: $('#ch-autostart').checked
         }
@@ -416,7 +467,7 @@ async function loadRelays() {
             </div>
           </div>
           <div class="item-sub">Origem: ${esc(r.sourceUrl)}</div>
-          <div class="item-sub">${r.mode === 'copy' ? 'cópia direta' : `transcode ${esc(r.resolution)}`}${r.loop ? ' · 🔁 loop' : ''}${r.autostart ? ' · ⚡ autostart' : ''}${r.restarts ? ` · ${r.restarts} restart(s)` : ''}</div>
+          <div class="item-sub">${r.mode === 'copy' ? 'cópia direta' : `transcode ${esc(r.resolution)}`}${r.loop ? ' · 🔁 loop' : ''}${r.autostart ? ' · ⏯ autostart' : ''}${r.restarts ? ` · ${r.restarts} restart(s)` : ''}${speedInfo(r)}</div>
           ${urlRow('RTMP', u.rtmp)}${urlRow('FLV', u.flv)}
         </div>`;
       }).join('');
@@ -556,7 +607,7 @@ function showPreview(key) {
 /* ---------- delegação de cliques ---------- */
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-regen-input],[data-del-input]');
+  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-regen-input],[data-del-input]');
   if (!t) return;
   const d = t.dataset;
   try {
@@ -594,6 +645,10 @@ document.addEventListener('click', async (e) => {
     else if (d.renameVideo) {
       const name = prompt('Novo nome:', d.name);
       if (name) { await api(`/videos/${d.renameVideo}`, { method: 'PATCH', body: { name } }); loadVideos(); }
+    }
+    else if (d.renormVideo) {
+      await api(`/videos/${d.renormVideo}/normalize`, { method: 'POST' });
+      toast('Normalização reenfileirada.'); loadVideos();
     }
     else if (d.regenInput) {
       if (confirm('Gerar nova chave? A chave atual deixará de funcionar.')) {

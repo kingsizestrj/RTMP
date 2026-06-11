@@ -50,6 +50,7 @@ router.patch('/:id', async (req, res) => {
   if (typeof b.name === 'string' && b.name.trim()) relay.name = b.name.trim();
   if (typeof b.sourceUrl === 'string' && URL_RE.test(b.sourceUrl.trim())) relay.sourceUrl = b.sourceUrl.trim();
   if (b.mode === 'transcode' || b.mode === 'copy') relay.mode = b.mode;
+  if (['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].includes(b.preset)) relay.preset = b.preset;
   if (typeof b.loop === 'boolean') relay.loop = b.loop;
   if (typeof b.resolution === 'string' && /^\d{2,5}x\d{2,5}$/.test(b.resolution)) relay.resolution = b.resolution;
   if (typeof b.videoBitrate === 'string' && /^\d+k$/.test(b.videoBitrate)) relay.videoBitrate = b.videoBitrate;

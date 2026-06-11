@@ -5,8 +5,16 @@ const sm = require('../streamManager');
 
 const router = express.Router();
 
+function readyCount(channel) {
+  const byId = new Map(db.get().videos.map((v) => [v.id, v]));
+  return (channel.videoIds || []).filter((vid) => {
+    const v = byId.get(vid);
+    return v && v.normalized && v.normalized.status === 'ready';
+  }).length;
+}
+
 function publicView(channel) {
-  return Object.assign({}, channel, sm.statusOf(channel.id));
+  return Object.assign({ readyCount: readyCount(channel) }, channel, sm.statusOf(channel.id));
 }
 
 router.get('/', (req, res) => {
@@ -23,11 +31,12 @@ router.post('/', async (req, res) => {
     key: db.streamKey(),
     videoIds: [],
     shuffle: false,
-    mode: 'transcode',           // 'transcode' | 'copy'
+    mode: 'normalized',          // 'normalized' | 'transcode' | 'copy'
     resolution: '1280x720',
     videoBitrate: '2500k',
     audioBitrate: '128k',
     fps: 30,
+    preset: 'veryfast',
     autostart: false,
     createdAt: new Date().toISOString()
   };
@@ -48,7 +57,8 @@ router.patch('/:id', async (req, res) => {
     channel.videoIds = b.videoIds.filter((id) => valid.has(id));
   }
   if (typeof b.shuffle === 'boolean') channel.shuffle = b.shuffle;
-  if (b.mode === 'transcode' || b.mode === 'copy') channel.mode = b.mode;
+  if (['normalized', 'transcode', 'copy'].includes(b.mode)) channel.mode = b.mode;
+  if (['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].includes(b.preset)) channel.preset = b.preset;
   if (typeof b.resolution === 'string' && /^\d{2,5}x\d{2,5}$/.test(b.resolution)) channel.resolution = b.resolution;
   if (typeof b.videoBitrate === 'string' && /^\d+k$/.test(b.videoBitrate)) channel.videoBitrate = b.videoBitrate;
   if (typeof b.audioBitrate === 'string' && /^\d+k$/.test(b.audioBitrate)) channel.audioBitrate = b.audioBitrate;
@@ -66,6 +76,11 @@ router.post('/:id/start', (req, res) => {
   if (!channel) return res.status(404).json({ error: 'Canal não encontrado' });
   if ((channel.videoIds || []).length === 0) {
     return res.status(400).json({ error: 'Adicione vídeos à playlist antes de iniciar' });
+  }
+  if (channel.mode === 'normalized' && readyCount(channel) === 0) {
+    return res.status(400).json({
+      error: 'Nenhum vídeo da playlist terminou de normalizar ainda — acompanhe na aba Vídeos, ou mude o modo do canal para "Transcodificar".'
+    });
   }
   sm.startChannel(channel.id);
   res.json(publicView(channel));

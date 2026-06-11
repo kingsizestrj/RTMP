@@ -2,15 +2,36 @@ services:
   rtmp-panel:
     build: .
     restart: unless-stopped
+    # init colhe processos ffmpeg órfãos/zumbis dentro do container
+    init: true
+    stop_grace_period: 15s
     ports:
       - "3000:3000"   # painel web
       - "1935:1935"   # RTMP
       - "8000:8000"   # HTTP-FLV
     environment:
+      NODE_ENV: production
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASS: ${ADMIN_PASS:-admin}
       PUBLIC_HOST: ${PUBLIC_HOST:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
+      # Ajustes de desempenho (veja README — seção Desempenho)
+      STALL_TIMEOUT_SEC: ${STALL_TIMEOUT_SEC:-45}
+      FFMPEG_THREADS: ${FFMPEG_THREADS:-}
+      NORMALIZE_ENABLED: ${NORMALIZE_ENABLED:-true}
+      NORMALIZE_RESOLUTION: ${NORMALIZE_RESOLUTION:-1280x720}
+      NORMALIZE_FPS: ${NORMALIZE_FPS:-30}
+      NORMALIZE_VIDEO_BITRATE: ${NORMALIZE_VIDEO_BITRATE:-2500k}
+      NORMALIZE_AUDIO_BITRATE: ${NORMALIZE_AUDIO_BITRATE:-128k}
+      NORMALIZE_PRESET: ${NORMALIZE_PRESET:-veryfast}
+      NORMALIZE_THREADS: ${NORMALIZE_THREADS:-}
+      NORMALIZE_CONCURRENCY: ${NORMALIZE_CONCURRENCY:-1}
     volumes:
       - ./data:/app/data
       - ./media:/app/media
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

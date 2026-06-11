@@ -1,11 +1,13 @@
 const express = require('express');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const config = require('./config');
 const db = require('./db');
 const auth = require('./auth');
 const rtmpServer = require('./rtmpServer');
 const sm = require('./streamManager');
+const normalizer = require('./normalizer');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
 fs.mkdirSync(config.UPLOAD_DIR, { recursive: true });
@@ -43,7 +45,10 @@ app.get('/api/status', auth.requireAuth, (req, res) => {
       rtmpPort: config.RTMP_PORT,
       httpMediaPort: config.HTTP_MEDIA_PORT,
       publicHost: config.PUBLIC_HOST,
-      uptime: Math.round(process.uptime())
+      uptime: Math.round(process.uptime()),
+      load: os.loadavg()[0],
+      cpus: os.cpus().length,
+      memUsedPct: Math.round((1 - os.freemem() / os.totalmem()) * 100)
     }
   });
 });
@@ -61,8 +66,9 @@ app.listen(config.PANEL_PORT, () => {
   }
 });
 
-// Sobe canais/relays com autostart
+// Sobe canais/relays com autostart e retoma normalizações pendentes
 sm.autostartAll();
+normalizer.bootstrap();
 
 function gracefulExit() {
   console.log('Encerrando streams...');

@@ -40,6 +40,25 @@ module.exports = {
   // Diretórios
   DATA_DIR: process.env.DATA_DIR || path.join(ROOT, 'data'),
   UPLOAD_DIR: process.env.UPLOAD_DIR || path.join(ROOT, 'media', 'uploads'),
+  NORMALIZED_DIR: process.env.NORMALIZED_DIR || path.join(ROOT, 'media', 'normalized'),
+
+  // Watchdog: reinicia o ffmpeg se ficar este tempo sem progresso (0 desativa)
+  STALL_TIMEOUT_SEC: parseInt(process.env.STALL_TIMEOUT_SEC || '45', 10),
+
+  // Threads do ffmpeg nos streams ao vivo ('' = automático)
+  FFMPEG_THREADS: process.env.FFMPEG_THREADS || '',
+
+  // Normalização no upload: converte cada vídeo uma única vez para um perfil
+  // uniforme (H.264/AAC). Canais no modo "normalizado" transmitem com -c copy,
+  // gastando CPU quase zero durante o streaming.
+  NORMALIZE_ENABLED: process.env.NORMALIZE_ENABLED !== 'false',
+  NORMALIZE_RESOLUTION: process.env.NORMALIZE_RESOLUTION || '1280x720',
+  NORMALIZE_FPS: parseInt(process.env.NORMALIZE_FPS || '30', 10),
+  NORMALIZE_VIDEO_BITRATE: process.env.NORMALIZE_VIDEO_BITRATE || '2500k',
+  NORMALIZE_AUDIO_BITRATE: process.env.NORMALIZE_AUDIO_BITRATE || '128k',
+  NORMALIZE_PRESET: process.env.NORMALIZE_PRESET || 'veryfast',
+  NORMALIZE_THREADS: process.env.NORMALIZE_THREADS || '',
+  NORMALIZE_CONCURRENCY: parseInt(process.env.NORMALIZE_CONCURRENCY || '1', 10),
 
   // Limite de upload por arquivo (em MB)
   MAX_UPLOAD_MB: parseInt(process.env.MAX_UPLOAD_MB || '4096', 10),

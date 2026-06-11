@@ -6,6 +6,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const config = require('../config');
 const db = require('../db');
+const normalizer = require('../normalizer');
 
 const router = express.Router();
 
@@ -60,13 +61,25 @@ router.post('/upload', upload.array('videos', 20), async (req, res) => {
       filename: file.filename,
       size: file.size,
       duration,
+      normalized: { status: config.NORMALIZE_ENABLED ? 'pending' : 'disabled' },
       createdAt: new Date().toISOString()
     };
     state.videos.push(video);
     added.push(video);
   }
   await db.save();
+  for (const v of added) normalizer.enqueue(v.id);
   res.json({ ok: true, added });
+});
+
+// Reprocessa a normalização (retry de erro ou perfil alterado).
+router.post('/:id/normalize', async (req, res) => {
+  const video = db.get().videos.find((v) => v.id === req.params.id);
+  if (!video) return res.status(404).json({ error: 'Vídeo não encontrado' });
+  video.normalized = { status: 'pending' };
+  await db.save();
+  normalizer.renormalize(video.id);
+  res.json(video);
 });
 
 router.patch('/:id', async (req, res) => {
@@ -97,6 +110,7 @@ router.delete('/:id', async (req, res) => {
     c.videoIds = (c.videoIds || []).filter((vid) => vid !== video.id);
   }
   fs.unlink(path.join(config.UPLOAD_DIR, video.filename), () => {});
+  normalizer.removeNormalized(video);
   await db.save();
   res.json({ ok: true });
 });
