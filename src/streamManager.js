@@ -175,22 +175,34 @@ function outputArgs(key) {
   return ['-f', 'flv', '-flvflags', 'no_duration_filesize', rtmpUrlFor(key)];
 }
 
+// Fonte ao vivo prioritária do canal: uma entrada (OBS) OU um relay.
+// Com um relay "somente ao vivo" como fonte, o canal vira o "algo entre uma
+// live e outra": playlist de espera no ar, corta para o relay quando a live
+// engata e volta sozinho quando ela termina.
+function liveSourceFor(channel) {
+  if (!channel.liveInputId) return null;
+  const state = db.get();
+  const input = state.inputs.find((i) => i.id === channel.liveInputId);
+  if (input) return { key: input.key, name: input.name };
+  const relay = state.relays.find((r) => r.id === channel.liveInputId);
+  if (relay) return { key: relay.key, name: relay.name };
+  return null;
+}
+
 function buildChannelArgs(channel, entry) {
-  // Fallback de live: se a entrada ao vivo vinculada estiver publicando,
+  // Fallback de live: se a fonte ao vivo vinculada estiver publicando,
   // o canal retransmite a live em vez da playlist.
-  const liveInput = channel.liveInputId
-    ? db.get().inputs.find((i) => i.id === channel.liveInputId)
-    : null;
-  if (liveInput && rtmpServer.isKeyLive(liveInput.key)) {
+  const liveSrc = liveSourceFor(channel);
+  if (liveSrc && rtmpServer.isKeyLive(liveSrc.key)) {
     if (entry) {
       entry.sourceKind = 'live';
-      entry.sourceSig = `live:${liveInput.key}`;
+      entry.sourceSig = `live:${liveSrc.key}`;
       entry.playOrder = null;
     }
     const liveArgs = [
       '-hide_banner', '-loglevel', 'warning',
       '-nostats', '-progress', 'pipe:1',
-      '-i', `rtmp://127.0.0.1:${config.RTMP_PORT}/live/${liveInput.key}`
+      '-i', `rtmp://127.0.0.1:${config.RTMP_PORT}/live/${liveSrc.key}`
     ];
     if (channel.mode === 'transcode') liveArgs.push(...transcodeArgs(channel));
     else liveArgs.push('-c', 'copy');
@@ -768,10 +780,8 @@ function shutdown() {
 // ---------------------------------------------------------------------------
 
 function desiredSourceSig(channel) {
-  const liveInput = channel.liveInputId
-    ? db.get().inputs.find((i) => i.id === channel.liveInputId)
-    : null;
-  if (liveInput && rtmpServer.isKeyLive(liveInput.key)) return `live:${liveInput.key}`;
+  const liveSrc = liveSourceFor(channel);
+  if (liveSrc && rtmpServer.isKeyLive(liveSrc.key)) return `live:${liveSrc.key}`;
   const block = currentBlock(channel);
   return block ? `block:${block.id}` : 'default';
 }
@@ -794,13 +804,11 @@ setInterval(() => {
   }
 }, 20000);
 
-// Live vinculada ligou/desligou: reage na hora, sem esperar o tick
+// Fonte ao vivo vinculada ligou/desligou: reage na hora, sem esperar o tick
 function handleLiveEdge(key) {
-  const state = db.get();
-  for (const c of state.channels) {
-    if (!c.liveInputId) continue;
-    const input = state.inputs.find((i) => i.id === c.liveInputId);
-    if (input && input.key === key) checkChannelSource(c, 'entrada ao vivo');
+  for (const c of db.get().channels) {
+    const src = liveSourceFor(c);
+    if (src && src.key === key) checkChannelSource(c, 'fonte ao vivo');
   }
 }
 rtmpServer.events.on('publish', handleLiveEdge);

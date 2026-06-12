@@ -324,6 +324,16 @@ function uploadFiles(files) {
 
 $('#upload-input').addEventListener('change', (e) => { uploadFiles(e.target.files); e.target.value = ''; });
 
+$('#slate-btn').addEventListener('click', async () => {
+  const text = prompt('Texto do cartão de espera:', 'JÁ VOLTAMOS');
+  if (!text) return;
+  try {
+    await api('/videos/slate', { method: 'POST', body: { text, duration: 10 } });
+    toast('Cartão gerado! Adicione-o a uma playlist de espera.');
+    loadVideos();
+  } catch (err) { toast(err.message, true); }
+});
+
 const dz = $('#drop-zone');
 ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
 ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
@@ -531,8 +541,8 @@ $('#new-channel-btn').addEventListener('click', async () => {
 });
 
 async function editChannel(id) {
-  const [channels, videos, playlists, inputs] = await Promise.all([
-    api('/channels'), api('/videos'), api('/playlists'), api('/inputs')
+  const [channels, videos, playlists, inputs, relays] = await Promise.all([
+    api('/channels'), api('/videos'), api('/playlists'), api('/inputs'), api('/relays')
   ]);
   const c = channels.find((x) => x.id === id);
   if (!c) return;
@@ -578,10 +588,11 @@ async function editChannel(id) {
       </div>
     </div>
     <div class="form-row">
-      <label>🎥 Entrada ao vivo prioritária (quando publicar, corta a playlist; quando cair, volta)</label>
+      <label>🎥 Fonte ao vivo prioritária — entrada OBS ou relay (quando publicar, corta a playlist; quando cair, volta para a espera)</label>
       <select id="ch-live-input">
         <option value="">— nenhuma —</option>
-        ${inputs.map((i) => `<option value="${i.id}" ${c.liveInputId === i.id ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}
+        ${inputs.length ? `<optgroup label="Entradas ao vivo (OBS)">${inputs.map((i) => `<option value="${i.id}" ${c.liveInputId === i.id ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</optgroup>` : ''}
+        ${relays.length ? `<optgroup label="Relays (YouTube etc.)">${relays.map((r) => `<option value="${r.id}" ${c.liveInputId === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</optgroup>` : ''}
       </select>
     </div>
     <div class="form-row"><label>Modo de saída</label>
@@ -893,38 +904,61 @@ function showPreview(key) {
 
   if (window.mpegts && mpegts.isSupported()) {
     const video = $('#preview-video');
-    flvPlayer = mpegts.createPlayer(
-      { type: 'flv', isLive: true, url: u.flv },
-      {
-        // Sem buffer de acúmulo + perseguição de latência nativa: se o player
-        // ficar para trás da borda ao vivo, ele pula para perto dela ("truque
-        // do 2x" automatizado)
-        enableStashBuffer: false,
-        stashInitialSize: 128,
-        liveBufferLatencyChasing: true,
-        liveBufferLatencyMaxLatency: 4,
-        liveBufferLatencyMinRemain: 0.5
-      }
-    );
-    flvPlayer.attachMediaElement(video);
-    flvPlayer.load();
-    flvPlayer.play().catch(() => {});
+    let alive = true;
 
-    // Complemento suave: entre 2s e 4s de atraso, acelera 1.15x para colar na
-    // live sem o "pulo" do seek. Também exibe a latência atual.
-    const chaser = setInterval(() => {
-      if (!flvPlayer || !video.buffered || video.buffered.length === 0) return;
-      const latency = video.buffered.end(video.buffered.length - 1) - video.currentTime;
-      const label = $('#latency-label');
-      if (label) {
-        label.textContent = `· latência do player: ${latency.toFixed(1)}s` +
-          (video.playbackRate > 1 ? ' ⏩ acelerando' : '');
-      }
-      if (latency > 2) video.playbackRate = 1.15;
-      else if (latency < 1.2 && video.playbackRate !== 1) video.playbackRate = 1.0;
-    }, 1000);
-    const oldDestroy = flvPlayer.destroy.bind(flvPlayer);
-    flvPlayer.destroy = () => { clearInterval(chaser); oldDestroy(); };
+    function startPlayer() {
+      const player = mpegts.createPlayer(
+        { type: 'flv', isLive: true, url: u.flv },
+        {
+          // Sem buffer de acúmulo + perseguição de latência nativa: se o player
+          // ficar para trás da borda ao vivo, ele pula para perto dela ("truque
+          // do 2x" automatizado)
+          enableStashBuffer: false,
+          stashInitialSize: 128,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyMaxLatency: 4,
+          liveBufferLatencyMinRemain: 0.5
+        }
+      );
+      player.attachMediaElement(video);
+      player.load();
+      player.play().catch(() => {});
+
+      // Complemento suave: entre 2s e 4s de atraso, acelera 1.15x para colar
+      // na live sem o "pulo" do seek. Também exibe a latência atual.
+      const chaser = setInterval(() => {
+        if (!video.buffered || video.buffered.length === 0) return;
+        const latency = video.buffered.end(video.buffered.length - 1) - video.currentTime;
+        const label = $('#latency-label');
+        if (label) {
+          label.textContent = `· latência do player: ${latency.toFixed(1)}s` +
+            (video.playbackRate > 1 ? ' ⏩ acelerando' : '');
+        }
+        if (latency > 2) video.playbackRate = 1.15;
+        else if (latency < 1.2 && video.playbackRate !== 1) video.playbackRate = 1.0;
+      }, 1000);
+
+      const oldDestroy = player.destroy.bind(player);
+      const cleanup = () => { clearInterval(chaser); try { oldDestroy(); } catch {} };
+
+      // Reconecta sozinho quando o stream cai/troca de fonte (o servidor
+      // reinicia o ffmpeg ao alternar live/playlist — a queda dura ~2s)
+      const retry = () => {
+        if (!alive) return;
+        const label = $('#latency-label');
+        if (label) label.textContent = '· reconectando...';
+        cleanup();
+        setTimeout(() => { if (alive) startPlayer(); }, 2500);
+      };
+      player.on(mpegts.Events.ERROR, retry);
+      player.on(mpegts.Events.LOADING_COMPLETE, retry);
+
+      // closeModal() destrói via flvPlayer: aí sim a reconexão para de vez
+      player.destroy = () => { alive = false; cleanup(); };
+      flvPlayer = player;
+    }
+
+    startPlayer();
   } else {
     toast('Navegador sem suporte a FLV — use o link RTMP no VLC', true);
   }

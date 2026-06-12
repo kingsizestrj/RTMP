@@ -45,10 +45,13 @@
       <section id="tab-videos" class="tab hidden">
         <div class="toolbar">
           <h2>Acervo de vídeos</h2>
-          <label class="btn primary">
-            ⬆️ Enviar vídeos
-            <input type="file" id="upload-input" multiple accept="video/*,.mkv,.flv,.ts" hidden>
-          </label>
+          <div style="display:flex; gap:8px">
+            <button id="slate-btn" class="btn" title="Gera um vídeo de texto centralizado para usar como espera entre lives">🪧 Cartão de espera</button>
+            <label class="btn primary">
+              ⬆️ Enviar vídeos
+              <input type="file" id="upload-input" multiple accept="video/*,.mkv,.flv,.ts" hidden>
+            </label>
+          </div>
         </div>
         <div id="upload-progress" class="hidden">
           <div class="progress-bar"><div id="upload-bar"></div></div>

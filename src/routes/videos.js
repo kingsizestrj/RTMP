@@ -154,6 +154,77 @@ async function splitJob(video, segments) {
   }
 }
 
+// Gera um "cartão de espera" (slate): vídeo com texto centralizado e áudio
+// silencioso, já no perfil de normalização. Útil como playlist de espera de
+// um canal entre uma live e outra.
+const FONT_CANDIDATES = [
+  process.env.SLATE_FONT,
+  '/usr/share/fonts/ttf-dejavu/DejaVuSans-Bold.ttf',           // alpine (docker)
+  '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',      // debian/ubuntu
+  '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf'
+].filter(Boolean);
+
+router.post('/slate', async (req, res) => {
+  const text = String((req.body || {}).text || 'JÁ VOLTAMOS').slice(0, 80).trim() || 'JÁ VOLTAMOS';
+  const dur = Math.min(60, Math.max(3, parseInt((req.body || {}).duration, 10) || 10));
+  const font = FONT_CANDIDATES.find((f) => fs.existsSync(f));
+  if (!font) {
+    return res.status(400).json({ error: 'Nenhuma fonte encontrada no servidor (instale ttf-dejavu ou defina SLATE_FONT)' });
+  }
+
+  const id = db.id();
+  const filename = `${id}.mp4`;
+  const out = path.join(config.UPLOAD_DIR, filename);
+  // textfile evita o inferno de escapar caracteres no drawtext
+  const textFile = path.join(require('os').tmpdir(), `slate-${id}.txt`);
+  fs.writeFileSync(textFile, text);
+
+  const args = [
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-f', 'lavfi', '-i', `color=c=0x0f1419:size=1280x720:rate=30:duration=${dur}`,
+    '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+    '-vf', `drawtext=fontfile=${font}:textfile=${textFile}:fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h-text_h)/2`,
+    '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level', '4.1',
+    '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '5000k',
+    '-g', '60', '-sc_threshold', '0', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
+    '-t', String(dur), '-movflags', '+faststart',
+    out
+  ];
+
+  const ok = await new Promise((resolve) => {
+    let proc;
+    try {
+      proc = spawn(config.FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch { return resolve(false); }
+    let tail = '';
+    proc.stderr.on('data', (d) => { tail = (tail + d.toString()).slice(-300); });
+    proc.on('error', () => resolve(false));
+    proc.on('exit', (code) => {
+      if (code !== 0) console.error('[slate]', tail.trim());
+      resolve(code === 0 && fs.existsSync(out));
+    });
+  });
+  fs.unlink(textFile, () => {});
+  if (!ok) return res.status(500).json({ error: 'Falha ao gerar o cartão (veja o log do servidor)' });
+
+  const state = db.get();
+  const video = {
+    id,
+    name: `Cartão: ${text}`,
+    filename,
+    size: fs.statSync(out).size,
+    duration: dur,
+    durationSec: dur,
+    normalized: { status: config.NORMALIZE_ENABLED ? 'pending' : 'disabled' },
+    createdAt: new Date().toISOString()
+  };
+  state.videos.push(video);
+  await db.save();
+  normalizer.enqueue(id);
+  res.json(video);
+});
+
 // Reprocessa a normalização (retry de erro ou perfil alterado).
 router.post('/:id/normalize', async (req, res) => {
   const video = db.get().videos.find((v) => v.id === req.params.id);

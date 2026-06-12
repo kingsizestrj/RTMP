@@ -107,7 +107,10 @@ router.patch('/:id', async (req, res) => {
   }
   if (Number.isInteger(b.breakEvery) && b.breakEvery >= 0 && b.breakEvery <= 100) channel.breakEvery = b.breakEvery;
   if (typeof b.liveInputId === 'string') {
-    if (b.liveInputId === '' || state.inputs.some((i) => i.id === b.liveInputId)) {
+    // Fonte ao vivo: entrada (OBS) ou relay
+    if (b.liveInputId === '' ||
+        state.inputs.some((i) => i.id === b.liveInputId) ||
+        state.relays.some((r) => r.id === b.liveInputId)) {
       channel.liveInputId = b.liveInputId;
     }
   }
