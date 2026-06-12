@@ -81,5 +81,11 @@ module.exports = {
   MAX_UPLOAD_MB: parseInt(process.env.MAX_UPLOAD_MB || '4096', 10),
 
   // Se true, permite publicar no RTMP com qualquer chave (sem validação)
-  ALLOW_ANY_PUBLISH: process.env.ALLOW_ANY_PUBLISH === 'true'
+  ALLOW_ANY_PUBLISH: process.env.ALLOW_ANY_PUBLISH === 'true',
+
+  // Cache de GOP do servidor RTMP: true = quem entra vê imagem na hora, mas
+  // começa alguns segundos atrás da borda ao vivo (o player do painel persegue
+  // a borda sozinho). false = entra colado no ao vivo, porém espera o próximo
+  // keyframe para exibir imagem.
+  GOP_CACHE: process.env.GOP_CACHE !== 'false'
 };

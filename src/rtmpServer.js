@@ -35,7 +35,7 @@ function start() {
     rtmp: {
       port: config.RTMP_PORT,
       chunk_size: 60000,
-      gop_cache: true,
+      gop_cache: config.GOP_CACHE,
       ping: 30,
       ping_timeout: 60
     },

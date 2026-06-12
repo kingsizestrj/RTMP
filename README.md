@@ -129,6 +129,39 @@ ffmpeg -i entrada.mp4 \
 | `NORMALIZE_CONCURRENCY` | `1` | Vídeos normalizados em paralelo |
 | `NORMALIZE_SMART` | `true` | Pula o re-encode de vídeos enviados já no padrão (só remux) |
 
+## Baixa latência nas lives (sem "gol do vizinho antes")
+
+O atraso de uma live tem três fontes: o encoder (OBS), o servidor e o **buffer
+do player** — este último é o que mais cresce com o tempo. O famoso "truque do
+2x" do YouTube só força o player a consumir o buffer e colar na borda ao vivo.
+Aqui isso é **automático**:
+
+- **Player do painel (preview)**: roda em modo baixa latência (sem stash
+  buffer) e **persegue a borda ao vivo sozinho** — atrasou mais de 2s, acelera
+  1.15x; passou de 4s, pula direto para perto do vivo. A latência atual aparece
+  ao lado do player.
+- **Servidor**: a cadeia RTMP com cópia direta (entradas ao vivo, fallback de
+  live e relays em modo cópia) não adiciona buffer relevante.
+
+Para espremer ainda mais:
+
+1. **No OBS**: *Configurações → Saída →* **Intervalo de keyframes = 1s**,
+   controle de taxa CBR e, se a CPU permitir, preset rápido. Keyframe curto é o
+   que mais reduz o atraso de quem entra no stream.
+2. **No VLC** (espectadores): abra com cache reduzido —
+   `vlc --network-caching=300 rtmp://servidor:1935/live/chave` (o padrão do VLC
+   é ~1s ou mais).
+3. **`GOP_CACHE=false`** no `.env` (opcional): quem entra fica colado no vivo,
+   mas a imagem só aparece no próximo keyframe (com keyframe de 1s no OBS, é
+   imperceptível). Com `true` (padrão), a imagem é instantânea e o player do
+   painel persegue a borda em seguida.
+4. **Relays do YouTube/HLS**: a fonte já chega com 10–30s de atraso de origem —
+   não há o que fazer do nosso lado; para latência mínima, publique direto no
+   servidor via OBS.
+
+Com OBS (keyframe 1s) → servidor → player do painel ou VLC ajustado, a latência
+fim-a-fim típica fica em **1–3 segundos**.
+
 ## Desempenho (stream travando?)
 
 O vilão típico é **CPU saturada pelo transcode ao vivo**. Nesta ordem:

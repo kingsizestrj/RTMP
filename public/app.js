@@ -827,16 +827,46 @@ function showPreview(key) {
   const u = urls(key);
   openModal(`<h3>👁 Preview</h3>
     <div class="player-box"><video id="preview-video" controls autoplay muted></video></div>
-    <p class="muted" style="margin-top:8px">O preview usa o link FLV. O stream precisa estar no ar.</p>
+    <p class="muted" style="margin-top:8px">O preview usa o link FLV em modo baixa latência (persegue a borda ao vivo sozinho).
+      <span id="latency-label"></span></p>
     ${urlRow('RTMP', u.rtmp)}${urlRow('FLV', u.flv)}
     <div class="modal-actions"><button class="btn" id="modal-cancel">Fechar</button></div>`);
   $('#modal-cancel').addEventListener('click', closeModal);
 
-  if (window.flvjs && flvjs.isSupported()) {
-    flvPlayer = flvjs.createPlayer({ type: 'flv', isLive: true, url: u.flv });
-    flvPlayer.attachMediaElement($('#preview-video'));
+  if (window.mpegts && mpegts.isSupported()) {
+    const video = $('#preview-video');
+    flvPlayer = mpegts.createPlayer(
+      { type: 'flv', isLive: true, url: u.flv },
+      {
+        // Sem buffer de acúmulo + perseguição de latência nativa: se o player
+        // ficar para trás da borda ao vivo, ele pula para perto dela ("truque
+        // do 2x" automatizado)
+        enableStashBuffer: false,
+        stashInitialSize: 128,
+        liveBufferLatencyChasing: true,
+        liveBufferLatencyMaxLatency: 4,
+        liveBufferLatencyMinRemain: 0.5
+      }
+    );
+    flvPlayer.attachMediaElement(video);
     flvPlayer.load();
     flvPlayer.play().catch(() => {});
+
+    // Complemento suave: entre 2s e 4s de atraso, acelera 1.15x para colar na
+    // live sem o "pulo" do seek. Também exibe a latência atual.
+    const chaser = setInterval(() => {
+      if (!flvPlayer || !video.buffered || video.buffered.length === 0) return;
+      const latency = video.buffered.end(video.buffered.length - 1) - video.currentTime;
+      const label = $('#latency-label');
+      if (label) {
+        label.textContent = `· latência do player: ${latency.toFixed(1)}s` +
+          (video.playbackRate > 1 ? ' ⏩ acelerando' : '');
+      }
+      if (latency > 2) video.playbackRate = 1.15;
+      else if (latency < 1.2 && video.playbackRate !== 1) video.playbackRate = 1.0;
+    }, 1000);
+    const oldDestroy = flvPlayer.destroy.bind(flvPlayer);
+    flvPlayer.destroy = () => { clearInterval(chaser); oldDestroy(); };
   } else {
     toast('Navegador sem suporte a FLV — use o link RTMP no VLC', true);
   }
