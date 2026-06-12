@@ -632,6 +632,11 @@ document.addEventListener('click', async (e) => {
   const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-regen-input],[data-del-input]');
   if (!t) return;
   const d = t.dataset;
+  // Evita clique duplo disparar a mesma ação duas vezes (ex.: dois starts)
+  if (t.tagName === 'BUTTON') {
+    if (t.disabled) return;
+    t.disabled = true;
+  }
   try {
     if (d.copy) copyText(d.copy);
     else if (d.preview) showPreview(d.preview);
@@ -684,6 +689,8 @@ document.addEventListener('click', async (e) => {
     }
   } catch (err) {
     toast(err.message, true);
+  } finally {
+    if (t.tagName === 'BUTTON') t.disabled = false;
   }
 });
 

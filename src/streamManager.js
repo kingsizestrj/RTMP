@@ -331,6 +331,20 @@ async function spawnStream(id, type, buildArgs, getItem) {
   entry.stopping = false;
   running.set(id, entry);
 
+  // Start manual durante a espera do retry: cancela o timer e tenta agora
+  if (entry.retryTimer) {
+    clearTimeout(entry.retryTimer);
+    entry.retryTimer = null;
+  }
+  // Start duplicado (clique duplo etc.): já existe um ffmpeg vivo para este
+  // stream — abrir outro publicaria na mesma chave, o RTMP rejeitaria o novo
+  // e o antigo viraria órfão segurando a chave. Ignora.
+  if (entry.proc) {
+    pushLog(entry, 'Start ignorado: o stream já está em execução.');
+    entry.status = 'running';
+    return;
+  }
+
   const item = getItem();
   if (!item) { stopWatchdog(entry); running.delete(id); return; }
 
@@ -471,15 +485,22 @@ function stop(id) {
 
 // Reinicia (ex.: playlist alterada) se estiver rodando.
 function restartIfRunning(id, type) {
-  if (!running.has(id)) return;
   const entry = running.get(id);
-  const wasStopping = entry.stopping;
+  if (!entry || entry.stopping) return;
   stop(id);
-  if (wasStopping) return;
-  setTimeout(() => {
+  // Espera o processo antigo morrer de verdade antes de religar: se o novo
+  // ffmpeg subir com a chave ainda publicada, o RTMP o rejeita (I/O error).
+  // O stop força SIGKILL em 5s, então o polling cobre com folga.
+  const tryStart = (attemptsLeft) => {
+    const old = running.get(id);
+    if (old && old.proc) {
+      if (attemptsLeft > 0) setTimeout(() => tryStart(attemptsLeft - 1), 500);
+      return;
+    }
     if (type === 'channel') startChannel(id);
     else startRelay(id);
-  }, 1500);
+  };
+  setTimeout(() => tryStart(14), 800);
 }
 
 function statusOf(id) {
