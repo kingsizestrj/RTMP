@@ -22,6 +22,24 @@ const running = new Map();
 // Preserva os logs entre paradas/reinícios (a entrada do mapa é recriada)
 const lastLogs = new Map();
 
+// Mata o helper (yt-dlp) e TODA a sua árvore de processos. O yt-dlp cria um
+// ffmpeg filho para baixar HLS; matar só o pai deixa o filho órfão baixando
+// para sempre (vaza banda/CPU a cada restart). O helper é criado com
+// detached:true (grupo de processos próprio) justamente para o kill(-pid).
+function killHelper(entry) {
+  const h = entry.helper;
+  if (!h) return;
+  entry.helper = null;
+  // Solta os fds dos pipes: mesmo que algo sobreviva, leva EPIPE na hora
+  try { if (h.stdout) h.stdout.destroy(); } catch {}
+  try { if (h.stderr) h.stderr.destroy(); } catch {}
+  try {
+    process.kill(-h.pid, 'SIGKILL');
+  } catch {
+    try { h.kill('SIGKILL'); } catch {}
+  }
+}
+
 function rtmpUrlFor(key) {
   return `rtmp://127.0.0.1:${config.RTMP_PORT}/live/${key}`;
 }
@@ -258,7 +276,7 @@ function ensureVodCached(relay, entry) {
         ...ytdlpBaseArgs(), '--no-progress',
         '-f', config.YTDLP_FORMAT, '--merge-output-format', 'mp4',
         '-o', file, relay.sourceUrl
-      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+      ], { stdio: ['ignore', 'ignore', 'pipe'], detached: true });
     } catch (err) {
       return reject(new Error(`yt-dlp: ${err.message}`));
     }
@@ -319,6 +337,8 @@ async function buildRelayArgs(relay, entry) {
         cmd: config.YTDLP_PATH,
         args: [
           ...ytdlpBaseArgs(), '--no-progress',
+          // ffmpeg interno do yt-dlp sem spam de stats nos logs
+          '--downloader-args', 'ffmpeg:-nostats -loglevel warning',
           '-f', config.YTDLP_LIVE_FORMAT, '-o', '-', relay.sourceUrl
         ]
       };
@@ -405,12 +425,11 @@ function scheduleRetry(entry, id, type, buildArgs, getItem) {
 async function spawnStream(id, type, buildArgs, getItem) {
   const existing = running.get(id);
   const entry = existing || {
-    proc: null, helper: null, type, status: 'starting', startedAt: null,
+    proc: null, helper: null, preparing: false, type, status: 'starting', startedAt: null,
     restarts: 0, backoff: 1000, logs: lastLogs.get(id) || [], stopping: false,
     retryTimer: null, watchdog: null, lastProgressAt: 0, stats: {}
   };
   entry.type = type;
-  entry.status = 'starting';
   entry.stopping = false;
   running.set(id, entry);
 
@@ -419,27 +438,31 @@ async function spawnStream(id, type, buildArgs, getItem) {
     clearTimeout(entry.retryTimer);
     entry.retryTimer = null;
   }
-  // Start duplicado (clique duplo etc.): já existe um ffmpeg vivo para este
-  // stream — abrir outro publicaria na mesma chave, o RTMP rejeitaria o novo
-  // e o antigo viraria órfão segurando a chave. Ignora.
-  if (entry.proc) {
-    pushLog(entry, 'Start ignorado: o stream já está em execução.');
-    entry.status = 'running';
+  // Start duplicado (clique duplo etc.): já existe um ffmpeg vivo — ou uma
+  // preparação assíncrona em andamento (yt-dlp resolvendo/baixando) — para
+  // este stream. Abrir outro pipeline publicaria na mesma chave, o RTMP
+  // rejeitaria o novo e o antigo viraria órfão. Ignora.
+  if (entry.proc || entry.preparing) {
+    pushLog(entry, 'Start ignorado: o stream já está em execução/preparação.');
     return;
   }
+  entry.status = 'starting';
 
   const item = getItem();
   if (!item) { stopWatchdog(entry); running.delete(id); return; }
 
   let plan;
+  entry.preparing = true;
   try {
     // Pode envolver rede/disco (yt-dlp consulta ou baixa a origem)
     plan = await buildArgs(item, entry);
   } catch (err) {
+    entry.preparing = false;
     pushLog(entry, `Erro ao preparar origem: ${err.message}`);
     if (!entry.stopping) scheduleRetry(entry, id, type, buildArgs, getItem);
     return;
   }
+  entry.preparing = false;
   // O usuário pode ter parado o stream enquanto a origem era preparada
   if (entry.stopping) {
     entry.status = 'stopped';
@@ -473,7 +496,8 @@ async function spawnStream(id, type, buildArgs, getItem) {
     pushLog(entry, `Origem via ${plan.helper.cmd} ${plan.helper.args.join(' ')}`);
     let helper = null;
     try {
-      helper = spawn(plan.helper.cmd, plan.helper.args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      // detached: grupo de processos próprio, para matar yt-dlp + filhos juntos
+      helper = spawn(plan.helper.cmd, plan.helper.args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     } catch (err) {
       pushLog(entry, `Falha ao iniciar yt-dlp: ${err.message}`);
     }
@@ -517,10 +541,7 @@ async function spawnStream(id, type, buildArgs, getItem) {
     entry.proc = null;
     entry.stats = {};
     stopWatchdog(entry);
-    if (entry.helper) {
-      try { entry.helper.kill('SIGKILL'); } catch {}
-      entry.helper = null;
-    }
+    killHelper(entry);
     pushLog(entry, `ffmpeg encerrou (code=${code} signal=${signal || '-'})`);
     if (entry.stopping) {
       entry.status = 'stopped';
@@ -553,10 +574,7 @@ function stop(id) {
   entry.stopping = true;
   if (entry.retryTimer) clearTimeout(entry.retryTimer);
   stopWatchdog(entry);
-  if (entry.helper) {
-    try { entry.helper.kill('SIGKILL'); } catch {}
-    entry.helper = null;
-  }
+  killHelper(entry);
   if (entry.proc) {
     entry.proc.kill('SIGTERM');
     const proc = entry.proc;
