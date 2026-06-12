@@ -46,11 +46,29 @@ function urls(key) {
   };
 }
 
+// navigator.clipboard só existe em contexto seguro (HTTPS/localhost); em
+// http://IP:porta usamos o fallback com textarea + execCommand.
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  document.body.removeChild(ta);
+  toast(ok ? 'Copiado!' : 'Não foi possível copiar — selecione e copie manualmente', !ok);
+}
+
 function copyText(text) {
-  navigator.clipboard.writeText(text).then(
-    () => toast('Copiado!'),
-    () => toast('Não foi possível copiar', true)
-  );
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => toast('Copiado!'), () => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
 }
 
 function fmtBytes(n) {
