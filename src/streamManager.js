@@ -304,6 +304,13 @@ async function buildRelayArgs(relay, entry) {
 
   if (relay.ytdlp) {
     const isLive = await ytdlpIsLive(relay.sourceUrl);
+    // "Somente ao vivo": para URLs permanentes tipo youtube.com/@canal/live —
+    // se não há live agora (ou a URL caiu no VOD do jogo encerrado), aguarda
+    // e tenta de novo em vez de baixar o VOD. O backoff (máx. 30s) vira um
+    // vigia: quando a próxima live começar, o relay engata sozinho.
+    if (relay.liveOnly && !isLive) {
+      throw new Error('fonte não está ao vivo agora — aguardando a próxima live');
+    }
     if (isLive) {
       // Live: o yt-dlp baixa o stream (com toda a lógica de headers/anti-bot)
       // e entrega ao ffmpeg pela entrada padrão.

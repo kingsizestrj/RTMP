@@ -34,6 +34,9 @@ router.post('/', async (req, res) => {
     sourceUrl: cleanUrl,
     // Links de página (YouTube, Twitch...) são resolvidos pelo yt-dlp
     ytdlp: typeof b.ytdlp === 'boolean' ? b.ytdlp : sm.isYtdlpUrl(cleanUrl),
+    // URLs permanentes de live (youtube.com/@canal/live) esperam a próxima
+    // transmissão em vez de baixar o VOD do que já acabou
+    liveOnly: typeof b.liveOnly === 'boolean' ? b.liveOnly : /\/live\/?$/i.test(cleanUrl),
     mode: b.mode === 'transcode' ? 'transcode' : 'copy',
     loop: b.loop === true,   // true para fontes VOD (repete indefinidamente)
     resolution: typeof b.resolution === 'string' && /^\d{2,5}x\d{2,5}$/.test(b.resolution) ? b.resolution : '1280x720',
@@ -61,6 +64,7 @@ router.patch('/:id', async (req, res) => {
     if (typeof b.ytdlp !== 'boolean') relay.ytdlp = sm.isYtdlpUrl(relay.sourceUrl);
   }
   if (typeof b.ytdlp === 'boolean') relay.ytdlp = b.ytdlp;
+  if (typeof b.liveOnly === 'boolean') relay.liveOnly = b.liveOnly;
   if (b.mode === 'transcode' || b.mode === 'copy') relay.mode = b.mode;
   if (['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].includes(b.preset)) relay.preset = b.preset;
   if (typeof b.loop === 'boolean') relay.loop = b.loop;

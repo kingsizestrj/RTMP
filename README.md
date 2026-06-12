@@ -66,6 +66,7 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
 4. Copie o link **RTMP** gerado — use em qualquer player (VLC: *Mídia → Abrir transmissão de rede*) ou aponte como fonte para outra plataforma. O painel mostra **o que está no ar e o que vem a seguir**.
 5. Para **retransmitir um link HTTP** (m3u8, mp4, outra live), crie um *Relay* com a URL de origem — o painel gera o link RTMP de saída. Marque *loop* se a origem for um arquivo de vídeo.
 6. Para **retransmitir do YouTube/Twitch**, cole o link da página (vídeo ou live) no relay — a opção *yt-dlp* é marcada automaticamente.
+   - **Lives que mudam de link a cada transmissão** (ex.: cada jogo é um link novo): use a URL permanente do canal, `https://www.youtube.com/@NomeDoCanal/live` — ela sempre aponta para a live atual. A opção *📡 somente ao vivo* (marcada automaticamente para esse formato) faz o relay **aguardar a próxima live e engatar sozinho** quando ela começar, sem mexer em nada entre uma transmissão e outra. Deixe com *autostart* e esqueça.
    - **Lives**: o yt-dlp baixa a transmissão e alimenta o FFmpeg em tempo real; se a live cair, o relay fica tentando reconectar sozinho.
    - **Vídeos**: são baixados **uma única vez** para o cache local (`media/cache/`, na melhor qualidade H.264 até 1080p) e transmitidos de lá — sem links expirando nem re-downloads a cada loop. O status mostra "BAIXANDO" durante o download. O cache é apagado quando o relay é excluído.
    - **Retransmita apenas conteúdo que você tem direito de redistribuir.**

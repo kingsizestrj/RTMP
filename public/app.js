@@ -692,7 +692,7 @@ async function loadRelays() {
             </div>
           </div>
           <div class="item-sub">Origem: ${esc(r.sourceUrl)}</div>
-          <div class="item-sub">${r.mode === 'copy' ? 'cópia direta' : `transcode ${esc(r.resolution)}`}${r.ytdlp ? ' · ▶️ yt-dlp' : ''}${r.loop ? ' · 🔁 loop' : ''}${r.autostart ? ' · ⏯ autostart' : ''}${r.restarts ? ` · ${r.restarts} restart(s)` : ''}${speedInfo(r)}</div>
+          <div class="item-sub">${r.mode === 'copy' ? 'cópia direta' : `transcode ${esc(r.resolution)}`}${r.ytdlp ? ' · ▶️ yt-dlp' : ''}${r.liveOnly ? ' · 📡 só ao vivo' : ''}${r.loop ? ' · 🔁 loop' : ''}${r.autostart ? ' · ⏯ autostart' : ''}${r.restarts ? ` · ${r.restarts} restart(s)` : ''}${speedInfo(r)}</div>
           ${urlRow('RTMP', u.rtmp)}${urlRow('FLV', u.flv)}
         </div>`;
       }).join('');
@@ -706,6 +706,7 @@ function relayForm(r = {}) {
     <div class="form-row"><label>URL de origem (YouTube, http, hls, rtmp, rtsp, srt, udp)</label>
       <input type="text" id="rl-url" value="${esc(r.sourceUrl || '')}" placeholder="https://youtube.com/watch?v=... ou https://exemplo.com/stream.m3u8"></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="rl-ytdlp" ${r.ytdlp ? 'checked' : ''}><label for="rl-ytdlp">▶️ Resolver com yt-dlp (YouTube, Twitch, Vimeo... — marcado automaticamente)</label></div>
+    <div class="form-row checkbox-row"><input type="checkbox" id="rl-liveonly" ${r.liveOnly ? 'checked' : ''}><label for="rl-liveonly">📡 Somente ao vivo — aguarda a próxima live e engata sozinho (ideal para youtube.com/@canal/live)</label></div>
     <div class="form-grid">
       <div class="form-row"><label>Modo</label>
         <select id="rl-mode">
@@ -728,6 +729,7 @@ function readRelayForm() {
     name: $('#rl-name').value,
     sourceUrl: $('#rl-url').value,
     ytdlp: $('#rl-ytdlp').checked,
+    liveOnly: $('#rl-liveonly').checked,
     mode: $('#rl-mode').value,
     resolution: $('#rl-res').value,
     loop: $('#rl-loop').checked,
@@ -735,10 +737,12 @@ function readRelayForm() {
   };
 }
 
-// Marca o yt-dlp sozinho quando o usuário cola um link de site suportado
+// Marca yt-dlp e "somente ao vivo" sozinho conforme a URL colada
 function wireYtdlpAutodetect() {
   $('#rl-url').addEventListener('input', () => {
-    $('#rl-ytdlp').checked = YTDLP_RE.test($('#rl-url').value);
+    const url = $('#rl-url').value;
+    $('#rl-ytdlp').checked = YTDLP_RE.test(url);
+    $('#rl-liveonly').checked = /\/live\/?$/i.test(url.trim());
   });
 }
 
