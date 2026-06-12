@@ -253,21 +253,54 @@ function ytdlpIsLive(pageUrl) {
 }
 
 // URL da aba de transmissões do canal (para listar lives simultâneas).
-function channelStreamsUrl(sourceUrl) {
-  const base = sourceUrl.replace(/\/live\/?$/i, '').replace(/\/$/, '');
+function channelStreamsUrl(channelUrl) {
+  const base = channelUrl.replace(/\/live\/?$/i, '').replace(/\/$/, '');
   return /\/streams$/i.test(base) ? base : base + '/streams';
 }
 
+const CHANNEL_URL_RE = /(https?:\/\/(?:www\.|m\.)?youtube\.com\/(?:@[^/?#]+|channel\/[^/?#]+|c\/[^/?#]+|user\/[^/?#]+))/i;
+
+// Descobre a URL do canal a partir de QUALQUER URL do YouTube: URLs de canal
+// são reconhecidas direto; links de vídeo (watch?v=...) são resolvidos pelo
+// yt-dlp (channel_url do vídeo) e o resultado fica em cache.
+const channelUrlCache = new Map();
+
+async function resolveChannelUrl(sourceUrl) {
+  const m = sourceUrl.match(CHANNEL_URL_RE);
+  if (m) return m[1];
+  if (channelUrlCache.has(sourceUrl)) return channelUrlCache.get(sourceUrl);
+  const url = await new Promise((resolve, reject) => {
+    execFile(
+      config.YTDLP_PATH,
+      [...ytdlpBaseArgs(), '--print', 'channel_url', sourceUrl],
+      { timeout: 60000, maxBuffer: 256 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          const reason = (stderr || err.message).trim().split('\n').pop() || 'falha desconhecida';
+          return reject(new Error(`não consegui descobrir o canal desta URL (${reason})`));
+        }
+        const u = stdout.trim().split('\n')[0];
+        if (!/^https?:\/\//.test(u)) return reject(new Error('canal não identificado para esta URL'));
+        resolve(u);
+      }
+    );
+  });
+  channelUrlCache.set(sourceUrl, url);
+  return url;
+}
+
 // Lista as lives NO AR de um canal (título + id). Usado quando o canal pode
-// ter várias transmissões simultâneas e o relay escolhe pelo título.
-function listChannelLives(sourceUrl) {
+// ter várias transmissões simultâneas e o relay escolhe pelo título. Aceita
+// qualquer URL do YouTube — o canal é descoberto automaticamente.
+async function listChannelLives(sourceUrl) {
+  const channelUrl = await resolveChannelUrl(sourceUrl);
   return new Promise((resolve, reject) => {
     const args = ['--no-warnings', '--socket-timeout', '30'];
     if (config.YTDLP_COOKIES) args.push('--cookies', config.YTDLP_COOKIES);
     args.push(
       '--flat-playlist', '--playlist-items', '1-20',
       '--print', '%(id)s\t%(live_status)s\t%(title)s',
-      channelStreamsUrl(sourceUrl)
+      channelStreamsUrl(channelUrl)
     );
     execFile(config.YTDLP_PATH, args, { timeout: 60000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
