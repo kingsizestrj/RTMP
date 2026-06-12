@@ -73,6 +73,9 @@ module.exports = {
   NORMALIZE_PRESET: process.env.NORMALIZE_PRESET || 'veryfast',
   NORMALIZE_THREADS: process.env.NORMALIZE_THREADS || '',
   NORMALIZE_CONCURRENCY: parseInt(process.env.NORMALIZE_CONCURRENCY || '1', 10),
+  // Detecção inteligente: vídeos enviados já no padrão do perfil são apenas
+  // reempacotados (segundos, sem re-encode nem perda). false = sempre re-encodar.
+  NORMALIZE_SMART: process.env.NORMALIZE_SMART !== 'false',
 
   // Limite de upload por arquivo (em MB)
   MAX_UPLOAD_MB: parseInt(process.env.MAX_UPLOAD_MB || '4096', 10),

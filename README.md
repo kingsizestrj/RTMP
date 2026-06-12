@@ -66,6 +66,27 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
    - Se o YouTube bloquear o IP do servidor (erro 403 ou "Sign in to confirm you're not a bot" — comum em VPS/datacenter), exporte os cookies do seu navegador (extensão "Get cookies.txt"), salve em `./data/cookies.txt` e defina `YTDLP_COOKIES=/app/data/cookies.txt` no `.env`.
 5. Para **transmitir ao vivo do OBS**, crie uma *Entrada*, configure o OBS com o servidor `rtmp://SEU_IP:1935/live` e a chave gerada.
 
+### Enviando vídeos já normalizados
+
+O upload detecta automaticamente o quanto precisa converter:
+
+- **Vídeo e áudio já no padrão do perfil** → só reempacota para o formato de playout (**segundos**, sem re-encode nem perda de qualidade). O badge mostra "✅ normalizado ⚡".
+- **Vídeo no padrão, áudio diferente** (ex.: 48 kHz) → o vídeo é aproveitado como está e apenas o áudio é convertido (muito rápido).
+- **Fora do padrão** → conversão completa, como sempre.
+
+Para pré-normalizar na sua máquina e ter upload instantâneo, gere o arquivo com o perfil padrão (720p30, H.264/AAC 44,1 kHz estéreo):
+
+```bash
+ffmpeg -i entrada.mp4 \
+  -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30" \
+  -c:v libx264 -preset veryfast -profile:v high -level 4.1 \
+  -b:v 2500k -maxrate 2500k -bufsize 5000k -g 60 -sc_threshold 0 -pix_fmt yuv420p \
+  -c:a aac -b:a 128k -ar 44100 -ac 2 \
+  saida.mp4
+```
+
+(Se mudou o perfil via `NORMALIZE_*`, ajuste resolução/fps/bitrates de acordo. `NORMALIZE_SMART=false` desativa a detecção e força re-encode sempre.)
+
 ### Modos de saída dos canais
 
 - **⚡ Normalizado** (padrão, recomendado): cada vídeo é convertido **uma única vez** no upload para um perfil uniforme (H.264/AAC, em background e com prioridade baixa de CPU). O streaming usa `-c copy` — **CPU quase zero durante a transmissão**, sem risco de travar por falta de processamento.
@@ -98,6 +119,7 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
 | `NORMALIZE_PRESET` | `veryfast` | Preset x264 da normalização |
 | `NORMALIZE_THREADS` | *(auto)* | Limita threads da normalização |
 | `NORMALIZE_CONCURRENCY` | `1` | Vídeos normalizados em paralelo |
+| `NORMALIZE_SMART` | `true` | Pula o re-encode de vídeos enviados já no padrão (só remux) |
 
 ## Desempenho (stream travando?)
 

@@ -219,8 +219,15 @@ function normBadge(v) {
   };
   const m = map[n.status];
   if (!m) return '';
-  const tip = n.status === 'error' && n.error ? ` title="${esc(n.error)}"` : '';
-  return `<span class="badge ${m[0]}"${tip}>${m[1]}</span>`;
+  const methodTips = {
+    remux: 'Vídeo enviado já estava no padrão — apenas reempacotado, sem re-encode nem perda de qualidade',
+    audio: 'Vídeo aproveitado sem re-encode; apenas o áudio foi convertido para o padrão',
+    full: 'Convertido por completo para o perfil de normalização'
+  };
+  let tip = '';
+  if (n.status === 'error' && n.error) tip = ` title="${esc(n.error)}"`;
+  else if (n.status === 'ready' && methodTips[n.method]) tip = ` title="${esc(methodTips[n.method])}"`;
+  return `<span class="badge ${m[0]}"${tip}>${m[1]}${n.method === 'remux' ? ' ⚡' : ''}</span>`;
 }
 
 async function loadVideos() {

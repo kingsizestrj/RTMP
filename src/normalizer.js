@@ -57,6 +57,79 @@ function probeDuration(filePath) {
   });
 }
 
+function probeStreams(filePath) {
+  return new Promise((resolve) => {
+    execFile(
+      config.FFPROBE_PATH,
+      ['-v', 'quiet', '-print_format', 'json', '-show_streams', filePath],
+      { timeout: 15000, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err) return resolve(null);
+        try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
+      }
+    );
+  });
+}
+
+function parseFps(s) {
+  if (!s) return null;
+  const [n, d] = String(s).split('/').map(Number);
+  if (!d) return Number.isFinite(n) ? n : null;
+  return n / d;
+}
+
+// Compara o arquivo enviado com o perfil de normalização e decide o quanto
+// precisa converter:
+//   'remux' — vídeo e áudio já conformes: só reempacota para TS (segundos)
+//   'audio' — vídeo conforme, áudio difere: copia o vídeo, converte só o áudio
+//   'full'  — re-encode completo (caminho tradicional)
+function conformance(info) {
+  if (!config.NORMALIZE_SMART) return 'full';
+  if (!info || !Array.isArray(info.streams)) return 'full';
+  const v = info.streams.find((s) => s.codec_type === 'video');
+  const a = info.streams.find((s) => s.codec_type === 'audio');
+  if (!v || !a) return 'full';
+
+  const [w, h] = config.NORMALIZE_RESOLUTION.split('x').map(Number);
+  const fps = parseFps(v.r_frame_rate) ?? parseFps(v.avg_frame_rate);
+  const videoOk =
+    v.codec_name === 'h264' &&
+    v.pix_fmt === 'yuv420p' &&
+    v.width === w && v.height === h &&
+    fps != null && Math.abs(fps - config.NORMALIZE_FPS) <= 1 &&
+    (!v.field_order || v.field_order === 'progressive') &&
+    (!v.sample_aspect_ratio || v.sample_aspect_ratio === '1:1' || v.sample_aspect_ratio === '0:1');
+  if (!videoOk) return 'full';
+
+  const audioOk =
+    a.codec_name === 'aac' &&
+    parseInt(a.sample_rate, 10) === 44100 &&
+    a.channels === 2;
+  return audioOk ? 'remux' : 'audio';
+}
+
+function argsForMethod(method, inputPath, outputPath) {
+  if (method === 'remux') {
+    return [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', inputPath,
+      '-c', 'copy',
+      '-f', 'mpegts', outputPath
+    ];
+  }
+  if (method === 'audio') {
+    return [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', inputPath,
+      '-c:v', 'copy',
+      '-af', 'aresample=async=1:first_pts=0',
+      '-c:a', 'aac', '-b:a', config.NORMALIZE_AUDIO_BITRATE, '-ar', '44100', '-ac', '2',
+      '-f', 'mpegts', outputPath
+    ];
+  }
+  return buildArgs(inputPath, outputPath);
+}
+
 function findVideo(videoId) {
   return db.get().videos.find((v) => v.id === videoId);
 }
@@ -83,9 +156,17 @@ function runJob(videoId) {
     const output = normalizedPath(video);
     const tmp = output + '.tmp';
     await setStatus(videoId, { status: 'processing', error: null });
-    console.log(`[normalize] iniciando: ${video.name}`);
 
-    const args = buildArgs(input, tmp);
+    // Vídeo já no padrão do perfil não precisa de re-encode
+    const method = conformance(await probeStreams(input));
+    const labels = {
+      remux: 'já está no padrão — apenas reempacotando (sem re-encode)',
+      audio: 'vídeo já no padrão — convertendo apenas o áudio',
+      full: 'convertendo (re-encode completo)'
+    };
+    console.log(`[normalize] ${video.name}: ${labels[method]}`);
+
+    const args = argsForMethod(method, input, tmp);
     let proc;
     try {
       proc = spawn(config.FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -126,7 +207,7 @@ function runJob(videoId) {
       const duration = await probeDuration(output);
       const v = findVideo(videoId);
       if (v && duration != null) v.duration = duration;
-      await setStatus(videoId, { status: 'ready', filename: path.basename(output), error: null });
+      await setStatus(videoId, { status: 'ready', filename: path.basename(output), method, error: null });
       console.log(`[normalize] pronto: ${video.name}`);
       resolve();
     });
