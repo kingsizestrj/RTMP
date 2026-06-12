@@ -159,7 +159,14 @@ function Install-FFmpeg {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $zip = Join-Path $env:TEMP 'ffmpeg-rtmppanel.zip'
         $tmp = Join-Path $env:TEMP 'ffmpeg-rtmppanel-extract'
-        Invoke-WebRequest -Uri $script:FFmpegUrl -OutFile $zip -UseBasicParsing
+        # Sem a barra de progresso o download do PS 5.1 fica varias vezes mais rapido
+        $oldPP = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        try {
+            Invoke-WebRequest -Uri $script:FFmpegUrl -OutFile $zip -UseBasicParsing
+        } finally {
+            $ProgressPreference = $oldPP
+        }
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
         Expand-Archive -Path $zip -DestinationPath $tmp -Force
         New-Item -ItemType Directory -Force -Path $script:BinDir | Out-Null
