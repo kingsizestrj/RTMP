@@ -37,6 +37,8 @@ router.post('/', async (req, res) => {
     // URLs permanentes de live (youtube.com/@canal/live) esperam a próxima
     // transmissão em vez de baixar o VOD do que já acabou
     liveOnly: typeof b.liveOnly === 'boolean' ? b.liveOnly : /\/live\/?$/i.test(cleanUrl),
+    // Canal com várias lives simultâneas: escolhe a live pelo título
+    titleFilter: typeof b.titleFilter === 'string' ? b.titleFilter.trim().slice(0, 200) : '',
     mode: b.mode === 'transcode' ? 'transcode' : 'copy',
     loop: b.loop === true,   // true para fontes VOD (repete indefinidamente)
     resolution: typeof b.resolution === 'string' && /^\d{2,5}x\d{2,5}$/.test(b.resolution) ? b.resolution : '1280x720',
@@ -65,6 +67,7 @@ router.patch('/:id', async (req, res) => {
   }
   if (typeof b.ytdlp === 'boolean') relay.ytdlp = b.ytdlp;
   if (typeof b.liveOnly === 'boolean') relay.liveOnly = b.liveOnly;
+  if (typeof b.titleFilter === 'string') relay.titleFilter = b.titleFilter.trim().slice(0, 200);
   if (b.mode === 'transcode' || b.mode === 'copy') relay.mode = b.mode;
   if (['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].includes(b.preset)) relay.preset = b.preset;
   if (typeof b.loop === 'boolean') relay.loop = b.loop;
@@ -77,6 +80,17 @@ router.patch('/:id', async (req, res) => {
   await db.save();
   sm.restartIfRunning(relay.id, 'relay');
   res.json(publicView(relay));
+});
+
+// Lista as lives no ar do canal da origem (para escolher o filtro de título)
+router.get('/:id/lives', async (req, res) => {
+  const relay = db.get().relays.find((r) => r.id === req.params.id);
+  if (!relay) return res.status(404).json({ error: 'Relay não encontrado' });
+  try {
+    res.json(await sm.listChannelLives(relay.sourceUrl));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 router.post('/:id/start', (req, res) => {

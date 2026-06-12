@@ -692,7 +692,7 @@ async function loadRelays() {
             </div>
           </div>
           <div class="item-sub">Origem: ${esc(r.sourceUrl)}</div>
-          <div class="item-sub">${r.mode === 'copy' ? 'cópia direta' : `transcode ${esc(r.resolution)}`}${r.ytdlp ? ' · ▶️ yt-dlp' : ''}${r.liveOnly ? ' · 📡 só ao vivo' : ''}${r.loop ? ' · 🔁 loop' : ''}${r.autostart ? ' · ⏯ autostart' : ''}${r.restarts ? ` · ${r.restarts} restart(s)` : ''}${speedInfo(r)}</div>
+          <div class="item-sub">${r.mode === 'copy' ? 'cópia direta' : `transcode ${esc(r.resolution)}`}${r.ytdlp ? ' · ▶️ yt-dlp' : ''}${r.liveOnly ? ' · 📡 só ao vivo' : ''}${r.titleFilter ? ` · 🎯 "${esc(r.titleFilter)}"` : ''}${r.loop ? ' · 🔁 loop' : ''}${r.autostart ? ' · ⏯ autostart' : ''}${r.restarts ? ` · ${r.restarts} restart(s)` : ''}${speedInfo(r)}</div>
           ${urlRow('RTMP', u.rtmp)}${urlRow('FLV', u.flv)}
         </div>`;
       }).join('');
@@ -707,6 +707,14 @@ function relayForm(r = {}) {
       <input type="text" id="rl-url" value="${esc(r.sourceUrl || '')}" placeholder="https://youtube.com/watch?v=... ou https://exemplo.com/stream.m3u8"></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="rl-ytdlp" ${r.ytdlp ? 'checked' : ''}><label for="rl-ytdlp">▶️ Resolver com yt-dlp (YouTube, Twitch, Vimeo... — marcado automaticamente)</label></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="rl-liveonly" ${r.liveOnly ? 'checked' : ''}><label for="rl-liveonly">📡 Somente ao vivo — aguarda a próxima live e engata sozinho (ideal para youtube.com/@canal/live)</label></div>
+    <div class="form-row">
+      <label>🎯 Filtro de título — para canais com várias lives simultâneas, escolhe a live cujo título combina (palavra ou regex, ex.: <code>jogo|brasil</code>). Vazio = live em destaque.</label>
+      <div style="display:flex; gap:8px">
+        <input type="text" id="rl-titlefilter" value="${esc(r.titleFilter || '')}" placeholder="ex.: jogo">
+        ${r.id ? `<button class="btn small" id="rl-list-lives" type="button">🔍 Lives no ar</button>` : ''}
+      </div>
+      <div id="rl-lives-box" class="muted" style="margin-top:6px"></div>
+    </div>
     <div class="form-grid">
       <div class="form-row"><label>Modo</label>
         <select id="rl-mode">
@@ -730,11 +738,38 @@ function readRelayForm() {
     sourceUrl: $('#rl-url').value,
     ytdlp: $('#rl-ytdlp').checked,
     liveOnly: $('#rl-liveonly').checked,
+    titleFilter: $('#rl-titlefilter').value,
     mode: $('#rl-mode').value,
     resolution: $('#rl-res').value,
     loop: $('#rl-loop').checked,
     autostart: $('#rl-autostart').checked
   };
+}
+
+// Botão "Lives no ar": lista as transmissões ativas do canal; clicar num
+// título copia-o para o filtro.
+function wireLivesList(relayId) {
+  const btn = $('#rl-list-lives');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const box = $('#rl-lives-box');
+    box.textContent = 'Consultando o canal...';
+    try {
+      const lives = await api(`/relays/${relayId}/lives`);
+      box.innerHTML = lives.length === 0
+        ? 'Nenhuma live no ar neste canal agora.'
+        : 'No ar agora (clique para usar como filtro):<br>' + lives.map((l) =>
+            `<a href="#" data-pick-title="${esc(l.title)}">🔴 ${esc(l.title)}</a>`).join('<br>');
+      box.querySelectorAll('[data-pick-title]').forEach((a) => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          $('#rl-titlefilter').value = a.dataset.pickTitle;
+        });
+      });
+    } catch (err) {
+      box.textContent = 'Erro: ' + err.message;
+    }
+  });
 }
 
 // Marca yt-dlp e "somente ao vivo" sozinho conforme a URL colada
@@ -772,6 +807,7 @@ async function editRelay(id) {
       <button class="btn primary" id="rl-save">Salvar</button>
     </div>`);
   wireYtdlpAutodetect();
+  wireLivesList(r.id);
   $('#modal-cancel').addEventListener('click', closeModal);
   $('#rl-save').addEventListener('click', async () => {
     try {

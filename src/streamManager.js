@@ -252,6 +252,45 @@ function ytdlpIsLive(pageUrl) {
   });
 }
 
+// URL da aba de transmissões do canal (para listar lives simultâneas).
+function channelStreamsUrl(sourceUrl) {
+  const base = sourceUrl.replace(/\/live\/?$/i, '').replace(/\/$/, '');
+  return /\/streams$/i.test(base) ? base : base + '/streams';
+}
+
+// Lista as lives NO AR de um canal (título + id). Usado quando o canal pode
+// ter várias transmissões simultâneas e o relay escolhe pelo título.
+function listChannelLives(sourceUrl) {
+  return new Promise((resolve, reject) => {
+    const args = ['--no-warnings', '--socket-timeout', '30'];
+    if (config.YTDLP_COOKIES) args.push('--cookies', config.YTDLP_COOKIES);
+    args.push(
+      '--flat-playlist', '--playlist-items', '1-20',
+      '--print', '%(id)s\t%(live_status)s\t%(title)s',
+      channelStreamsUrl(sourceUrl)
+    );
+    execFile(config.YTDLP_PATH, args, { timeout: 60000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        const reason = (stderr || err.message).trim().split('\n').pop() || 'falha desconhecida';
+        return reject(new Error(`yt-dlp: ${reason}`));
+      }
+      const lives = [];
+      for (const line of stdout.split('\n')) {
+        const [id, status, ...title] = line.trim().split('\t');
+        if (id && status === 'is_live') lives.push({ id, title: title.join('\t') || '(sem título)' });
+      }
+      resolve(lives);
+    });
+  });
+}
+
+// Filtro de título: regex case-insensitive; se inválida, vira busca simples.
+function pickByTitle(lives, filter) {
+  let re = null;
+  try { re = new RegExp(filter, 'i'); } catch {}
+  return lives.find((l) => re ? re.test(l.title) : l.title.toLowerCase().includes(filter.toLowerCase()));
+}
+
 // Baixa um VOD do YouTube uma única vez para o cache local. Streaming de URL
 // resolvida direto no ffmpeg leva 403 (o YouTube amarra a URL ao cliente que
 // resolveu o desafio anti-bot) — quem baixa precisa ser o próprio yt-dlp.
@@ -321,13 +360,29 @@ async function buildRelayArgs(relay, entry) {
   let helper = null;
 
   if (relay.ytdlp) {
-    const isLive = await ytdlpIsLive(relay.sourceUrl);
-    // "Somente ao vivo": para URLs permanentes tipo youtube.com/@canal/live —
-    // se não há live agora (ou a URL caiu no VOD do jogo encerrado), aguarda
-    // e tenta de novo em vez de baixar o VOD. O backoff (máx. 30s) vira um
-    // vigia: quando a próxima live começar, o relay engata sozinho.
-    if (relay.liveOnly && !isLive) {
-      throw new Error('fonte não está ao vivo agora — aguardando a próxima live');
+    let targetUrl = relay.sourceUrl;
+    let isLive;
+    if (relay.titleFilter && relay.titleFilter.trim()) {
+      // Canal com várias lives simultâneas: lista as transmissões no ar e
+      // escolhe pelo título (ex.: "jogo" pega a partida, não a cobertura).
+      const lives = await listChannelLives(relay.sourceUrl);
+      const match = pickByTitle(lives, relay.titleFilter.trim());
+      if (!match) {
+        const noAr = lives.length ? ` (no ar: ${lives.map((l) => `"${l.title}"`).join(', ')})` : '';
+        throw new Error(`nenhuma live corresponde ao filtro "${relay.titleFilter}"${noAr} — aguardando`);
+      }
+      if (entry) pushLog(entry, `Filtro de título: usando a live "${match.title}"`);
+      targetUrl = `https://www.youtube.com/watch?v=${match.id}`;
+      isLive = true;
+    } else {
+      isLive = await ytdlpIsLive(targetUrl);
+      // "Somente ao vivo": para URLs permanentes tipo youtube.com/@canal/live —
+      // se não há live agora (ou a URL caiu no VOD do jogo encerrado), aguarda
+      // e tenta de novo em vez de baixar o VOD. O backoff (máx. 30s) vira um
+      // vigia: quando a próxima live começar, o relay engata sozinho.
+      if (relay.liveOnly && !isLive) {
+        throw new Error('fonte não está ao vivo agora — aguardando a próxima live');
+      }
     }
     if (isLive) {
       // Live: o yt-dlp baixa o stream (com toda a lógica de headers/anti-bot)
@@ -339,7 +394,7 @@ async function buildRelayArgs(relay, entry) {
           ...ytdlpBaseArgs(), '--no-progress',
           // ffmpeg interno do yt-dlp sem spam de stats nos logs
           '--downloader-args', 'ffmpeg:-nostats -loglevel warning',
-          '-f', config.YTDLP_LIVE_FORMAT, '-o', '-', relay.sourceUrl
+          '-f', config.YTDLP_LIVE_FORMAT, '-o', '-', targetUrl
         ]
       };
     } else {
@@ -720,5 +775,5 @@ rtmpServer.events.on('unpublish', handleLiveEdge);
 
 module.exports = {
   startChannel, startRelay, stop, restartIfRunning,
-  statusOf, isRunning, autostartAll, shutdown, isYtdlpUrl
+  statusOf, isRunning, autostartAll, shutdown, isYtdlpUrl, listChannelLives
 };
