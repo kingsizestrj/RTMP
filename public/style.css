@@ -167,6 +167,31 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 }
 .playlist-pick label { display: flex; gap: 8px; padding: 4px; font-size: 13px; color: var(--text); }
 
+/* Grade de programação */
+.sched-block {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 13px;
+}
+.sched-days { display: flex; gap: 4px; }
+.sched-days label {
+  display: flex; flex-direction: column; align-items: center;
+  font-size: 10px; color: var(--muted); cursor: pointer;
+}
+.sched-block input[type="time"] { width: auto; padding: 5px 8px; }
+.sched-block select { width: auto; flex: 1; min-width: 120px; padding: 5px 8px; }
+
+/* Chips (cortes do divisor) */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 99px; padding: 3px 10px; font-size: 13px; margin: 2px;
+  color: var(--text);
+}
+.chip button {
+  background: none; border: none; color: var(--red); cursor: pointer; font-size: 12px;
+}
+
 /* Logs */
 .logs {
   background: #0a0e12; border: 1px solid var(--border); border-radius: 8px;

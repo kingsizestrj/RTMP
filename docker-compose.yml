@@ -11,6 +11,8 @@ services:
       - "8000:8000"   # HTTP-FLV
     environment:
       NODE_ENV: production
+      # Fuso horário da grade de programação (ex.: America/Sao_Paulo)
+      TZ: ${TZ:-}
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASS: ${ADMIN_PASS:-admin}
       PUBLIC_HOST: ${PUBLIC_HOST:-}

@@ -71,6 +71,24 @@ function fmtUptime(ms) {
   return fmtDuration(s);
 }
 
+function fmtClock(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const mm = String(m).padStart(2, '0'), ss = String(s).padStart(2, '0');
+  return h ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+}
+
+function parseClock(str) {
+  const parts = String(str).trim().split(':').map(Number);
+  if (parts.some((p) => !Number.isFinite(p) || p < 0)) return null;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 1) return parts[0];
+  return null;
+}
+
+const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
 function statusBadge(st) {
   const labels = { running: 'NO AR', stopped: 'PARADO', restarting: 'REINICIANDO', starting: 'INICIANDO', downloading: 'BAIXANDO', error: 'ERRO' };
   return `<span class="badge ${esc(st)}">${labels[st] || esc(st)}</span>`;
@@ -163,7 +181,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
 
 function refreshCurrentTab() {
   const map = {
-    dashboard: loadDashboard, videos: loadVideos,
+    dashboard: loadDashboard, videos: loadVideos, playlists: loadPlaylists,
     channels: loadChannels, relays: loadRelays, inputs: loadInputs
   };
   (map[currentTab] || (() => {}))().catch(() => {});
@@ -184,6 +202,7 @@ async function loadDashboard() {
   $('#dash-cards').innerHTML = `
     <div class="card"><div class="num">${st.live.length}</div><div class="label">Streams no ar</div></div>
     <div class="card"><div class="num">${st.counts.videos}</div><div class="label">Vídeos</div></div>
+    <div class="card"><div class="num">${st.counts.playlists}</div><div class="label">Playlists</div></div>
     <div class="card"><div class="num">${st.counts.channels}</div><div class="label">Canais</div></div>
     <div class="card"><div class="num">${st.counts.relays}</div><div class="label">Relays</div></div>
     <div class="card"><div class="num" ${loadWarn ? 'style="color:var(--red)"' : ''}>${loadPct}%</div>
@@ -242,6 +261,7 @@ async function loadVideos() {
           <span class="muted">${fmtBytes(v.size)} · ${fmtDuration(v.duration)}</span>
           <div class="item-actions">
             ${(v.normalized || {}).status === 'error' ? `<button class="btn small" data-renorm-video="${v.id}">🔄 Tentar de novo</button>` : ''}
+            <button class="btn small" data-split-video="${v.id}" title="Dividir em partes/episódios">✂️</button>
             <button class="btn small" data-rename-video="${v.id}" data-name="${esc(v.name)}">✏️</button>
             <button class="btn small danger" data-del-video="${v.id}">🗑️</button>
           </div>
@@ -291,6 +311,158 @@ const dz = $('#drop-zone');
 ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
 dz.addEventListener('drop', (e) => uploadFiles(e.dataTransfer.files));
 
+/* ---------- divisor de episódios ---------- */
+
+function showSplitModal(videoId, name) {
+  const cuts = [];
+  openModal(`
+    <h3>✂️ Dividir — ${esc(name)}</h3>
+    <div class="player-box"><video id="split-video" src="/api/videos/${videoId}/file" controls></video></div>
+    <p class="muted" style="margin-top:8px">Navegue até o fim de cada episódio e marque o corte. Os cortes são ajustados ao keyframe mais próximo (sem re-encode, instantâneo). Cada parte vira um novo vídeo do acervo.</p>
+    <div class="form-row" style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+      <button class="btn" id="split-mark">➕ Marcar corte no ponto atual</button>
+      <input type="text" id="split-manual" placeholder="ou digite h:mm:ss" style="width:140px">
+      <button class="btn small" id="split-add-manual">➕</button>
+    </div>
+    <div id="split-cuts" class="muted">Nenhum corte marcado.</div>
+    <div class="modal-actions">
+      <button class="btn" id="modal-cancel">Cancelar</button>
+      <button class="btn primary" id="split-go">Dividir</button>
+    </div>`);
+
+  function render() {
+    cuts.sort((a, b) => a - b);
+    $('#split-cuts').innerHTML = cuts.length === 0
+      ? 'Nenhum corte marcado.'
+      : cuts.map((c, i) => `<span class="chip">${fmtClock(c)} <button data-rm-cut="${i}">✕</button></span>`).join(' ')
+        + `<span class="muted"> → ${cuts.length + 1} parte(s)</span>`;
+    $('#split-go').textContent = `Dividir em ${cuts.length + 1} parte(s)`;
+  }
+  render();
+
+  function addCut(sec) {
+    if (sec == null || sec <= 0) return toast('Tempo inválido', true);
+    if (!cuts.includes(sec)) cuts.push(Math.round(sec));
+    render();
+  }
+
+  $('#split-mark').addEventListener('click', () => addCut($('#split-video').currentTime));
+  $('#split-add-manual').addEventListener('click', () => addCut(parseClock($('#split-manual').value)));
+  $('#split-cuts').addEventListener('click', (e) => {
+    if (e.target.dataset.rmCut != null) { cuts.splice(+e.target.dataset.rmCut, 1); render(); }
+  });
+  $('#modal-cancel').addEventListener('click', closeModal);
+  $('#split-go').addEventListener('click', async () => {
+    if (cuts.length === 0) return toast('Marque pelo menos um corte', true);
+    try {
+      const r = await api(`/videos/${videoId}/split`, { method: 'POST', body: { cuts } });
+      closeModal();
+      toast(`Dividindo em ${r.parts} partes — elas aparecem na lista em instantes.`);
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
+/* ---------- playlists ---------- */
+
+// Editor de lista ordenada (usado pelo modal de playlist): mantém uma ordem
+// mutável com subir/descer/remover + caixa de seleção para adicionar vídeos.
+function orderedPickerHtml(order, byId) {
+  return order.map((vid, i) => `
+    <div class="playlist-item">
+      <span class="muted">${i + 1}.</span>
+      <span class="name">${esc(byId.get(vid).name)}</span>
+      <button class="btn small" data-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
+      <button class="btn small" data-down="${i}" ${i === order.length - 1 ? 'disabled' : ''}>↓</button>
+      <button class="btn small danger" data-rm="${i}">✕</button>
+    </div>`).join('') || '<p class="muted">Lista vazia.</p>';
+}
+
+function wireOrderedPicker(listEl, pickRoot, order, byId) {
+  listEl.addEventListener('click', (e) => {
+    const up = e.target.dataset.up, down = e.target.dataset.down, rm = e.target.dataset.rm;
+    if (up != null) { const i = +up; [order[i - 1], order[i]] = [order[i], order[i - 1]]; }
+    else if (down != null) { const i = +down; [order[i], order[i + 1]] = [order[i + 1], order[i]]; }
+    else if (rm != null) order.splice(+rm, 1);
+    else return;
+    listEl.innerHTML = orderedPickerHtml(order, byId);
+  });
+  pickRoot.querySelectorAll('[data-add-video]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const vid = cb.dataset.addVideo;
+      if (cb.checked) { if (!order.includes(vid)) order.push(vid); }
+      else { const i = order.indexOf(vid); if (i !== -1) order.splice(i, 1); }
+      listEl.innerHTML = orderedPickerHtml(order, byId);
+    });
+  });
+}
+
+async function loadPlaylists() {
+  const [playlists, videos, channels] = await Promise.all([api('/playlists'), api('/videos'), api('/channels')]);
+  const byId = new Map(videos.map((v) => [v.id, v]));
+  $('#playlist-list').innerHTML = playlists.length === 0
+    ? '<p class="muted">Nenhuma playlist criada ainda.</p>'
+    : playlists.map((p) => {
+        const ids = (p.videoIds || []).filter((id) => byId.has(id));
+        const total = ids.reduce((s, id) => s + (byId.get(id).duration || 0), 0);
+        const users = channels.filter((c) => c.defaultPlaylistId === p.id || (c.schedule || []).some((b) => b.playlistId === p.id));
+        return `<div class="item">
+          <div class="item-head">
+            <span class="item-title">🎞 ${esc(p.name)}</span>
+            <span class="muted">${ids.length} vídeo(s) · ${fmtDuration(total)}${users.length ? ` · usada por: ${esc(users.map((c) => c.name).join(', '))}` : ''}</span>
+            <div class="item-actions">
+              <button class="btn small" data-edit-playlist="${p.id}">⚙️ Editar</button>
+              <button class="btn small danger" data-del-playlist="${p.id}">🗑️</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+}
+
+$('#new-playlist-btn').addEventListener('click', async () => {
+  const name = prompt('Nome da playlist (ex.: Desenhos manhã):');
+  if (!name) return;
+  try {
+    const p = await api('/playlists', { method: 'POST', body: { name } });
+    await loadPlaylists();
+    editPlaylist(p.id);
+  } catch (err) { toast(err.message, true); }
+});
+
+async function editPlaylist(id) {
+  const [playlists, videos] = await Promise.all([api('/playlists'), api('/videos')]);
+  const p = playlists.find((x) => x.id === id);
+  if (!p) return;
+  const byId = new Map(videos.map((v) => [v.id, v]));
+  const order = (p.videoIds || []).filter((vid) => byId.has(vid));
+
+  openModal(`
+    <h3>🎞 Editar playlist</h3>
+    <div class="form-row"><label>Nome</label><input type="text" id="pl-name" value="${esc(p.name)}"></div>
+    <div class="form-row">
+      <label>Vídeos (ordem de reprodução)</label>
+      <div id="pl-order">${orderedPickerHtml(order, byId)}</div>
+      <label style="margin-top:10px">Adicionar vídeos</label>
+      <div class="playlist-pick">
+        ${videos.map((v) => `<label><input type="checkbox" data-add-video="${v.id}" ${order.includes(v.id) ? 'checked' : ''}> ${esc(v.name)} <span class="muted">(${fmtDuration(v.duration)})</span></label>`).join('') || '<p class="muted">Envie vídeos na aba Vídeos primeiro.</p>'}
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="modal-cancel">Cancelar</button>
+      <button class="btn primary" id="pl-save">Salvar</button>
+    </div>`);
+
+  wireOrderedPicker($('#pl-order'), $('#modal'), order, byId);
+  $('#modal-cancel').addEventListener('click', closeModal);
+  $('#pl-save').addEventListener('click', async () => {
+    try {
+      await api(`/playlists/${id}`, { method: 'PATCH', body: { name: $('#pl-name').value, videoIds: order } });
+      closeModal();
+      toast('Playlist salva!');
+      loadPlaylists();
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
 /* ---------- canais ---------- */
 
 async function loadChannels() {
@@ -303,7 +475,7 @@ async function loadChannels() {
         return `<div class="item">
           <div class="item-head">
             <span class="item-title">📺 ${esc(c.name)}</span>
-            ${statusBadge(c.status)}
+            ${c.sourceKind === 'live' ? '<span class="badge error">🔴 AO VIVO</span>' : statusBadge(c.status)}
             ${c.status === 'running' ? `<span class="muted">há ${fmtUptime(c.uptime)}</span>` : ''}
             <div class="item-actions">
               ${running
@@ -315,8 +487,12 @@ async function loadChannels() {
               <button class="btn small danger" data-del-channel="${c.id}">🗑️</button>
             </div>
           </div>
+          ${c.nowPlaying ? `<div class="item-sub">▶ <b>Agora:</b> ${esc(c.nowPlaying.name)}${c.upNext ? ` &nbsp;·&nbsp; <b>A seguir:</b> ${esc(c.upNext.name)}` : ''}</div>` : ''}
           <div class="item-sub">
-            ${(c.videoIds || []).length} vídeo(s)${c.mode === 'normalized' && c.readyCount < (c.videoIds || []).length ? ` <span style="color:var(--yellow)">(${c.readyCount} normalizados)</span>` : ''}
+            ${c.defaultPlaylistSize} vídeo(s) na playlist padrão${c.mode === 'normalized' && c.readyCount < c.defaultPlaylistSize ? ` <span style="color:var(--yellow)">(${c.readyCount} normalizados)</span>` : ''}
+            ${(c.schedule || []).length ? ` · 📅 ${c.schedule.length} bloco(s) na grade` : ''}
+            ${c.breakEvery > 0 && (c.breakVideoIds || []).length ? ` · 📣 vinhetas a cada ${c.breakEvery}` : ''}
+            ${c.liveInputId ? ' · 🎥 fallback de live' : ''}
             · ${modeLabel(c.mode)}${c.mode === 'transcode' ? ` ${esc(c.resolution)} @ ${esc(c.videoBitrate)}` : ''}
             ${c.shuffle ? ' · 🔀 aleatório' : ''}${c.autostart ? ' · ⏯ autostart' : ''}
             ${c.restarts ? ` · ${c.restarts} restart(s)` : ''}${speedInfo(c)}
@@ -337,33 +513,58 @@ $('#new-channel-btn').addEventListener('click', async () => {
 });
 
 async function editChannel(id) {
-  const [channels, videos] = await Promise.all([api('/channels'), api('/videos')]);
+  const [channels, videos, playlists, inputs] = await Promise.all([
+    api('/channels'), api('/videos'), api('/playlists'), api('/inputs')
+  ]);
   const c = channels.find((x) => x.id === id);
   if (!c) return;
-  const byId = new Map(videos.map((v) => [v.id, v]));
-  let order = (c.videoIds || []).filter((vid) => byId.has(vid));
+  const blocks = (c.schedule || []).map((b) => ({ ...b, days: (b.days || []).slice() }));
 
-  function playlistHtml() {
-    return order.map((vid, i) => `
-      <div class="playlist-item">
-        <span class="muted">${i + 1}.</span>
-        <span class="name">${esc(byId.get(vid).name)}</span>
-        <button class="btn small" data-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
-        <button class="btn small" data-down="${i}" ${i === order.length - 1 ? 'disabled' : ''}>↓</button>
-        <button class="btn small danger" data-rm="${i}">✕</button>
-      </div>`).join('') || '<p class="muted">Playlist vazia.</p>';
+  const plOptions = (selected) =>
+    playlists.map((p) => `<option value="${p.id}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)} (${(p.videoIds || []).length})</option>`).join('');
+
+  function blocksHtml() {
+    if (blocks.length === 0) return '<p class="muted">Sem blocos — o canal toca a playlist padrão o tempo todo.</p>';
+    return blocks.map((b, i) => `
+      <div class="sched-block">
+        <span class="sched-days">${DAY_LABELS.map((lbl, d) =>
+          `<label title="${lbl}"><input type="checkbox" data-blk-day="${i}:${d}" ${b.days.includes(d) ? 'checked' : ''}>${lbl[0]}</label>`).join('')}</span>
+        <input type="time" data-blk-start="${i}" value="${esc(b.start || '08:00')}">
+        <span class="muted">às</span>
+        <input type="time" data-blk-end="${i}" value="${esc(b.end || '12:00')}">
+        <select data-blk-pl="${i}">${plOptions(b.playlistId)}</select>
+        <button class="btn small danger" data-blk-rm="${i}">✕</button>
+      </div>`).join('');
   }
 
   openModal(`
     <h3>⚙️ Editar canal</h3>
     <div class="form-row"><label>Nome</label><input type="text" id="ch-name" value="${esc(c.name)}"></div>
     <div class="form-row">
-      <label>Playlist (ordem de reprodução)</label>
-      <div id="ch-playlist">${playlistHtml()}</div>
-      <label style="margin-top:10px">Adicionar vídeos</label>
-      <div class="playlist-pick">
-        ${videos.map((v) => `<label><input type="checkbox" data-add-video="${v.id}"> ${esc(v.name)} <span class="muted">(${fmtDuration(v.duration)})</span></label>`).join('') || '<p class="muted">Envie vídeos na aba Vídeos primeiro.</p>'}
+      <label>Playlist padrão (toca quando nenhum bloco da grade está ativo)</label>
+      <select id="ch-default-pl">
+        <option value="">— escolha uma playlist —</option>
+        ${plOptions(c.defaultPlaylistId)}
+      </select>
+    </div>
+    <div class="form-row">
+      <label>📅 Grade de programação (horário do servidor)</label>
+      <div id="ch-blocks">${blocksHtml()}</div>
+      <button class="btn small" id="ch-add-block" style="margin-top:6px">➕ Adicionar bloco</button>
+    </div>
+    <div class="form-row">
+      <label>📣 Vinhetas/comerciais — inserir a cada
+        <input type="number" id="ch-break-every" value="${c.breakEvery || 0}" min="0" max="100" style="width:70px"> vídeo(s) (0 = desativado)</label>
+      <div class="playlist-pick" style="max-height:120px">
+        ${videos.map((v) => `<label><input type="checkbox" data-break-video="${v.id}" ${(c.breakVideoIds || []).includes(v.id) ? 'checked' : ''}> ${esc(v.name)} <span class="muted">(${fmtDuration(v.duration)})</span></label>`).join('') || '<p class="muted">Sem vídeos.</p>'}
       </div>
+    </div>
+    <div class="form-row">
+      <label>🎥 Entrada ao vivo prioritária (quando publicar, corta a playlist; quando cair, volta)</label>
+      <select id="ch-live-input">
+        <option value="">— nenhuma —</option>
+        ${inputs.map((i) => `<option value="${i.id}" ${c.liveInputId === i.id ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}
+      </select>
     </div>
     <div class="form-row"><label>Modo de saída</label>
       <select id="ch-mode">
@@ -401,23 +602,31 @@ async function editChannel(id) {
       <button class="btn primary" id="ch-save">Salvar</button>
     </div>`);
 
-  const playlistEl = $('#ch-playlist');
-  playlistEl.addEventListener('click', (e) => {
-    const up = e.target.dataset.up, down = e.target.dataset.down, rm = e.target.dataset.rm;
-    if (up != null) { const i = +up; [order[i - 1], order[i]] = [order[i], order[i - 1]]; }
-    else if (down != null) { const i = +down; [order[i], order[i + 1]] = [order[i + 1], order[i]]; }
-    else if (rm != null) order.splice(+rm, 1);
-    else return;
-    playlistEl.innerHTML = playlistHtml();
-  });
-
-  $('#modal').querySelectorAll('[data-add-video]').forEach((cb) => {
-    cb.addEventListener('change', () => {
-      const vid = cb.dataset.addVideo;
-      if (cb.checked) { if (!order.includes(vid)) order.push(vid); }
-      else order = order.filter((x) => x !== vid);
-      playlistEl.innerHTML = playlistHtml();
+  // Grade: blocos editados num array local e re-renderizados a cada mudança
+  const blocksEl = $('#ch-blocks');
+  function syncBlocksFromDom() {
+    blocksEl.querySelectorAll('[data-blk-start]').forEach((el) => { blocks[+el.dataset.blkStart].start = el.value; });
+    blocksEl.querySelectorAll('[data-blk-end]').forEach((el) => { blocks[+el.dataset.blkEnd].end = el.value; });
+    blocksEl.querySelectorAll('[data-blk-pl]').forEach((el) => { blocks[+el.dataset.blkPl].playlistId = el.value; });
+    blocksEl.querySelectorAll('[data-blk-day]').forEach((el) => {
+      const [i, d] = el.dataset.blkDay.split(':').map(Number);
+      const days = blocks[i].days;
+      if (el.checked) { if (!days.includes(d)) days.push(d); }
+      else { const idx = days.indexOf(d); if (idx !== -1) days.splice(idx, 1); }
     });
+  }
+  blocksEl.addEventListener('click', (e) => {
+    if (e.target.dataset.blkRm != null) {
+      syncBlocksFromDom();
+      blocks.splice(+e.target.dataset.blkRm, 1);
+      blocksEl.innerHTML = blocksHtml();
+    }
+  });
+  $('#ch-add-block').addEventListener('click', () => {
+    if (playlists.length === 0) return toast('Crie uma playlist primeiro (aba Playlists)', true);
+    syncBlocksFromDom();
+    blocks.push({ days: [1, 2, 3, 4, 5], start: '08:00', end: '12:00', playlistId: playlists[0].id });
+    blocksEl.innerHTML = blocksHtml();
   });
 
   // Opções de transcode só fazem sentido no modo "transcode"
@@ -429,12 +638,19 @@ async function editChannel(id) {
 
   $('#modal-cancel').addEventListener('click', closeModal);
   $('#ch-save').addEventListener('click', async () => {
+    syncBlocksFromDom();
+    const breakVideoIds = [...$('#modal').querySelectorAll('[data-break-video]:checked')]
+      .map((el) => el.dataset.breakVideo);
     try {
       await api(`/channels/${id}`, {
         method: 'PATCH',
         body: {
           name: $('#ch-name').value,
-          videoIds: order,
+          defaultPlaylistId: $('#ch-default-pl').value,
+          schedule: blocks,
+          breakVideoIds,
+          breakEvery: parseInt($('#ch-break-every').value, 10) || 0,
+          liveInputId: $('#ch-live-input').value,
           mode: $('#ch-mode').value,
           resolution: $('#ch-res').value,
           videoBitrate: $('#ch-vb').value,
@@ -629,7 +845,7 @@ function showPreview(key) {
 /* ---------- delegação de cliques ---------- */
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-regen-input],[data-del-input]');
+  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-edit-playlist],[data-del-playlist],[data-regen-input],[data-del-input]');
   if (!t) return;
   const d = t.dataset;
   // Evita clique duplo disparar a mesma ação duas vezes (ex.: dois starts)
@@ -676,6 +892,18 @@ document.addEventListener('click', async (e) => {
     else if (d.renormVideo) {
       await api(`/videos/${d.renormVideo}/normalize`, { method: 'POST' });
       toast('Normalização reenfileirada.'); loadVideos();
+    }
+    else if (d.splitVideo) {
+      const videos = await api('/videos');
+      const v = videos.find((x) => x.id === d.splitVideo);
+      if (v) showSplitModal(v.id, v.name);
+    }
+    else if (d.editPlaylist) editPlaylist(d.editPlaylist);
+    else if (d.delPlaylist) {
+      if (confirm('Excluir esta playlist?')) {
+        await api(`/playlists/${d.delPlaylist}`, { method: 'DELETE' });
+        toast('Playlist excluída.'); loadPlaylists();
+      }
     }
     else if (d.regenInput) {
       if (confirm('Gerar nova chave? A chave atual deixará de funcionar.')) {

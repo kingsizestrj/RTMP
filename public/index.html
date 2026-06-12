@@ -25,6 +25,7 @@
       <nav>
         <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
         <button class="tab-btn" data-tab="videos">Vídeos</button>
+        <button class="tab-btn" data-tab="playlists">Playlists</button>
         <button class="tab-btn" data-tab="channels">Canais</button>
         <button class="tab-btn" data-tab="relays">Relays</button>
         <button class="tab-btn" data-tab="inputs">Entradas ao vivo</button>
@@ -55,6 +56,16 @@
         </div>
         <div id="drop-zone" class="drop-zone">Arraste vídeos aqui para enviar</div>
         <div id="video-list" class="list"></div>
+      </section>
+
+      <!-- PLAYLISTS -->
+      <section id="tab-playlists" class="tab hidden">
+        <div class="toolbar">
+          <h2>Playlists</h2>
+          <button id="new-playlist-btn" class="btn primary">➕ Nova playlist</button>
+        </div>
+        <p class="muted">Monte listas de vídeos reutilizáveis — a playlist padrão do canal e os blocos da grade de programação apontam para elas.</p>
+        <div id="playlist-list" class="list"></div>
       </section>
 
       <!-- CANAIS -->

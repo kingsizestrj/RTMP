@@ -2,8 +2,10 @@
 
 Servidor RTMP com painel de gerência web. Permite:
 
-- **🎬 Acervo de vídeos** — upload de vídeos pelo painel (drag & drop, multi-arquivo, barra de progresso)
-- **📺 Canais (playlist em loop)** — monte uma playlist com os vídeos enviados e o servidor gera um link RTMP que reproduz tudo em loop infinito, 24/7, como um canal de TV
+- **🎬 Acervo de vídeos** — upload de vídeos pelo painel (drag & drop, multi-arquivo, barra de progresso) e divisor de episódios (✂️ corta um arquivo grande em partes, sem re-encode)
+- **🎞 Playlists** — listas ordenadas reutilizáveis, com indicação de onde são usadas
+- **📺 Canais (emissora 24/7)** — playlist padrão em loop infinito + **grade de programação** (blocos por dia da semana/horário apontando para playlists), **vinhetas/comerciais** a cada N vídeos e **"agora exibindo / a seguir"** em tempo real
+- **🎥 Live com fallback** — vincule uma entrada ao vivo ao canal: quando o OBS publicar, o canal corta para a live; quando cair, volta para a playlist sozinho
 - **🔁 Relays** — informe um link HTTP/HLS/RTMP/RTSP/SRT/UDP e ele é retransmitido como um novo link RTMP (com opção de loop para VOD)
 - **▶️ YouTube/Twitch** — cole o link de um vídeo ou live e o relay resolve a mídia real via yt-dlp automaticamente, renovando o link a cada reinício
 - **🎥 Entradas ao vivo** — gere chaves de stream para publicar do OBS/encoder e distribuir pelo link gerado
@@ -55,16 +57,20 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
 
 ## Como usar
 
-1. **Suba vídeos** na aba *Vídeos* (arraste arquivos ou clique em Enviar).
-2. **Crie um canal** na aba *Canais*, adicione os vídeos na ordem desejada e clique em **Iniciar**.
-3. Copie o link **RTMP** gerado — ele fica reproduzindo a playlist em loop. Use em qualquer player (VLC: *Mídia → Abrir transmissão de rede*) ou aponte como fonte para outra plataforma.
-4. Para **retransmitir um link HTTP** (m3u8, mp4, outra live), crie um *Relay* com a URL de origem — o painel gera o link RTMP de saída. Marque *loop* se a origem for um arquivo de vídeo.
-5. Para **retransmitir do YouTube/Twitch**, cole o link da página (vídeo ou live) no relay — a opção *yt-dlp* é marcada automaticamente.
+1. **Suba vídeos** na aba *Vídeos* (arraste arquivos ou clique em Enviar). Para um arquivo com vários episódios, use o **✂️ divisor**: marque os cortes no player e cada parte vira um vídeo do acervo (sem re-encode, cortes ajustados ao keyframe).
+2. **Monte playlists** na aba *Playlists* (listas ordenadas, reutilizáveis).
+3. **Crie um canal** na aba *Canais*, escolha a **playlist padrão** e clique em **Iniciar**. Opcionalmente configure:
+   - **📅 Grade de programação**: blocos por dia da semana e horário apontando para outras playlists (desenhos de manhã, filmes à noite). Fora dos blocos, vale a playlist padrão. O horário é o do servidor — defina `TZ` (ex.: `America/Sao_Paulo`) no `.env`/compose.
+   - **📣 Vinhetas**: vídeos inseridos a cada N vídeos de conteúdo.
+   - **🎥 Entrada ao vivo prioritária**: quando essa entrada publicar (OBS), o canal corta para a live; quando ela cair, volta para a programação (a troca leva ~2s).
+4. Copie o link **RTMP** gerado — use em qualquer player (VLC: *Mídia → Abrir transmissão de rede*) ou aponte como fonte para outra plataforma. O painel mostra **o que está no ar e o que vem a seguir**.
+5. Para **retransmitir um link HTTP** (m3u8, mp4, outra live), crie um *Relay* com a URL de origem — o painel gera o link RTMP de saída. Marque *loop* se a origem for um arquivo de vídeo.
+6. Para **retransmitir do YouTube/Twitch**, cole o link da página (vídeo ou live) no relay — a opção *yt-dlp* é marcada automaticamente.
    - **Lives**: o yt-dlp baixa a transmissão e alimenta o FFmpeg em tempo real; se a live cair, o relay fica tentando reconectar sozinho.
    - **Vídeos**: são baixados **uma única vez** para o cache local (`media/cache/`, na melhor qualidade H.264 até 1080p) e transmitidos de lá — sem links expirando nem re-downloads a cada loop. O status mostra "BAIXANDO" durante o download. O cache é apagado quando o relay é excluído.
    - **Retransmita apenas conteúdo que você tem direito de redistribuir.**
    - Se o YouTube bloquear o IP do servidor (erro 403 ou "Sign in to confirm you're not a bot" — comum em VPS/datacenter), exporte os cookies do seu navegador (extensão "Get cookies.txt"), salve em `./data/cookies.txt` e defina `YTDLP_COOKIES=/app/data/cookies.txt` no `.env`.
-5. Para **transmitir ao vivo do OBS**, crie uma *Entrada*, configure o OBS com o servidor `rtmp://SEU_IP:1935/live` e a chave gerada.
+7. Para **transmitir ao vivo do OBS**, crie uma *Entrada*, configure o OBS com o servidor `rtmp://SEU_IP:1935/live` e a chave gerada.
 
 ### Enviando vídeos já normalizados
 

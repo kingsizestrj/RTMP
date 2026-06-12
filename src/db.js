@@ -8,12 +8,38 @@ const config = require('./config');
 const DB_FILE = path.join(config.DATA_DIR, 'db.json');
 
 const DEFAULTS = {
-  videos: [],   // { id, name, filename, size, duration, createdAt }
-  channels: [], // { id, name, key, videoIds, shuffle, mode, resolution, videoBitrate, audioBitrate, fps, autostart }
-  relays: [],   // { id, name, key, sourceUrl, mode, loop, autostart }
-  inputs: [],   // { id, name, key, createdAt }  -> entradas ao vivo (OBS etc.)
+  videos: [],    // { id, name, filename, size, duration, durationSec, normalized, createdAt }
+  playlists: [], // { id, name, videoIds, createdAt }
+  channels: [],  // { id, name, key, defaultPlaylistId, schedule[], breakVideoIds, breakEvery, liveInputId, shuffle, mode, ... }
+  relays: [],    // { id, name, key, sourceUrl, ytdlp, mode, loop, autostart }
+  inputs: [],    // { id, name, key, createdAt }  -> entradas ao vivo (OBS etc.)
   settings: {}
 };
+
+// Migra bancos antigos: a playlist embutida do canal (videoIds) vira uma
+// entidade Playlist referenciada por defaultPlaylistId.
+function migrate(s) {
+  let changed = false;
+  for (const c of s.channels) {
+    if (!c.defaultPlaylistId) {
+      const pl = {
+        id: id(),
+        name: `${c.name} — padrão`,
+        videoIds: Array.isArray(c.videoIds) ? c.videoIds : [],
+        createdAt: new Date().toISOString()
+      };
+      s.playlists.push(pl);
+      c.defaultPlaylistId = pl.id;
+      changed = true;
+    }
+    if ('videoIds' in c) { delete c.videoIds; changed = true; }
+    if (!Array.isArray(c.schedule)) { c.schedule = []; changed = true; }
+    if (!Array.isArray(c.breakVideoIds)) { c.breakVideoIds = []; changed = true; }
+    if (typeof c.breakEvery !== 'number') { c.breakEvery = 0; changed = true; }
+    if (typeof c.liveInputId !== 'string') { c.liveInputId = ''; changed = true; }
+  }
+  return changed;
+}
 
 let state = null;
 let writeQueue = Promise.resolve();
@@ -22,10 +48,11 @@ function load() {
   fs.mkdirSync(config.DATA_DIR, { recursive: true });
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf8');
-    state = Object.assign({}, DEFAULTS, JSON.parse(raw));
+    state = Object.assign({}, JSON.parse(JSON.stringify(DEFAULTS)), JSON.parse(raw));
   } catch {
     state = JSON.parse(JSON.stringify(DEFAULTS));
   }
+  if (migrate(state)) save();
   return state;
 }
 

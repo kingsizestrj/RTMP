@@ -51,7 +51,7 @@ function probeDuration(filePath) {
       (err, stdout) => {
         if (err) return resolve(null);
         const d = parseFloat(stdout.trim());
-        resolve(Number.isFinite(d) ? Math.round(d) : null);
+        resolve(Number.isFinite(d) ? d : null);
       }
     );
   });
@@ -206,7 +206,11 @@ function runJob(videoId) {
       }
       const duration = await probeDuration(output);
       const v = findVideo(videoId);
-      if (v && duration != null) v.duration = duration;
+      if (v && duration != null) {
+        v.duration = Math.round(duration);
+        // duração exata, usada no cálculo do "agora exibindo"
+        v.durationSec = duration;
+      }
       await setStatus(videoId, { status: 'ready', filename: path.basename(output), method, error: null });
       console.log(`[normalize] pronto: ${video.name}`);
       resolve();

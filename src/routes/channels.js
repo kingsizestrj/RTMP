@@ -1,20 +1,55 @@
-// Canais: playlists de vídeos transmitidas em loop via RTMP.
+// Canais: emissoras RTMP 24/7 com playlist padrão, grade de programação,
+// vinhetas e fallback de entrada ao vivo.
 const express = require('express');
 const db = require('../db');
 const sm = require('../streamManager');
 
 const router = express.Router();
 
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function defaultPlaylistVideoIds(channel) {
+  const pl = db.get().playlists.find((p) => p.id === channel.defaultPlaylistId);
+  return pl ? (pl.videoIds || []) : [];
+}
+
 function readyCount(channel) {
   const byId = new Map(db.get().videos.map((v) => [v.id, v]));
-  return (channel.videoIds || []).filter((vid) => {
+  return defaultPlaylistVideoIds(channel).filter((vid) => {
     const v = byId.get(vid);
     return v && v.normalized && v.normalized.status === 'ready';
   }).length;
 }
 
 function publicView(channel) {
-  return Object.assign({ readyCount: readyCount(channel) }, channel, sm.statusOf(channel.id));
+  return Object.assign(
+    {
+      readyCount: readyCount(channel),
+      defaultPlaylistSize: defaultPlaylistVideoIds(channel).length
+    },
+    channel,
+    sm.statusOf(channel.id)
+  );
+}
+
+// Valida os blocos da grade: dias 0-6, horários HH:MM com início < fim e
+// playlist existente. Retorna null se algo for inválido.
+function sanitizeSchedule(blocks, state) {
+  if (!Array.isArray(blocks) || blocks.length > 50) return null;
+  const out = [];
+  for (const b of blocks) {
+    if (!b || typeof b !== 'object') return null;
+    const days = Array.isArray(b.days)
+      ? [...new Set(b.days.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))]
+      : [];
+    if (days.length === 0) return null;
+    if (typeof b.start !== 'string' || !TIME_RE.test(b.start)) return null;
+    if (typeof b.end !== 'string' || !TIME_RE.test(b.end)) return null;
+    if (b.start >= b.end) return null;
+    if (!state.playlists.some((p) => p.id === b.playlistId)) return null;
+    out.push({ id: b.id || db.id(), days, start: b.start, end: b.end, playlistId: b.playlistId });
+  }
+  return out;
 }
 
 router.get('/', (req, res) => {
@@ -29,9 +64,13 @@ router.post('/', async (req, res) => {
     id: db.id(),
     name: String(name).trim(),
     key: db.streamKey(),
-    videoIds: [],
+    defaultPlaylistId: '',
+    schedule: [],          // [{ id, days[0-6], start 'HH:MM', end 'HH:MM', playlistId }]
+    breakVideoIds: [],     // vinhetas/comerciais
+    breakEvery: 0,         // a cada N vídeos de conteúdo (0 = sem intervalos)
+    liveInputId: '',       // entrada ao vivo prioritária (fallback)
     shuffle: false,
-    mode: 'normalized',          // 'normalized' | 'transcode' | 'copy'
+    mode: 'normalized',    // 'normalized' | 'transcode' | 'copy'
     resolution: '1280x720',
     videoBitrate: '2500k',
     audioBitrate: '128k',
@@ -52,9 +91,25 @@ router.patch('/:id', async (req, res) => {
 
   const b = req.body || {};
   if (typeof b.name === 'string' && b.name.trim()) channel.name = b.name.trim();
-  if (Array.isArray(b.videoIds)) {
+  if (typeof b.defaultPlaylistId === 'string') {
+    if (b.defaultPlaylistId === '' || state.playlists.some((p) => p.id === b.defaultPlaylistId)) {
+      channel.defaultPlaylistId = b.defaultPlaylistId;
+    }
+  }
+  if (b.schedule !== undefined) {
+    const schedule = sanitizeSchedule(b.schedule, state);
+    if (schedule === null) return res.status(400).json({ error: 'Grade inválida: confira dias, horários (início < fim) e playlists dos blocos' });
+    channel.schedule = schedule;
+  }
+  if (Array.isArray(b.breakVideoIds)) {
     const valid = new Set(state.videos.map((v) => v.id));
-    channel.videoIds = b.videoIds.filter((id) => valid.has(id));
+    channel.breakVideoIds = b.breakVideoIds.filter((id) => valid.has(id));
+  }
+  if (Number.isInteger(b.breakEvery) && b.breakEvery >= 0 && b.breakEvery <= 100) channel.breakEvery = b.breakEvery;
+  if (typeof b.liveInputId === 'string') {
+    if (b.liveInputId === '' || state.inputs.some((i) => i.id === b.liveInputId)) {
+      channel.liveInputId = b.liveInputId;
+    }
   }
   if (typeof b.shuffle === 'boolean') channel.shuffle = b.shuffle;
   if (['normalized', 'transcode', 'copy'].includes(b.mode)) channel.mode = b.mode;
@@ -74,12 +129,12 @@ router.patch('/:id', async (req, res) => {
 router.post('/:id/start', (req, res) => {
   const channel = db.get().channels.find((c) => c.id === req.params.id);
   if (!channel) return res.status(404).json({ error: 'Canal não encontrado' });
-  if ((channel.videoIds || []).length === 0) {
-    return res.status(400).json({ error: 'Adicione vídeos à playlist antes de iniciar' });
+  if (defaultPlaylistVideoIds(channel).length === 0) {
+    return res.status(400).json({ error: 'Defina uma playlist padrão com vídeos antes de iniciar (aba Playlists)' });
   }
   if (channel.mode === 'normalized' && readyCount(channel) === 0) {
     return res.status(400).json({
-      error: 'Nenhum vídeo da playlist terminou de normalizar ainda — acompanhe na aba Vídeos, ou mude o modo do canal para "Transcodificar".'
+      error: 'Nenhum vídeo da playlist padrão terminou de normalizar ainda — acompanhe na aba Vídeos, ou mude o modo do canal para "Transcodificar".'
     });
   }
   sm.startChannel(channel.id);

@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const config = require('./config');
 const db = require('./db');
+const rtmpServer = require('./rtmpServer');
 
 const LOG_LINES = 60;
 const MAX_BACKOFF_MS = 30000;
@@ -17,6 +18,9 @@ const WATCHDOG_INTERVAL_MS = 5000;
 // id -> { proc, type, status, startedAt, restarts, backoff, logs[], stopping,
 //         retryTimer, watchdog, lastProgressAt, stats }
 const running = new Map();
+
+// Preserva os logs entre paradas/reinícios (a entrada do mapa é recriada)
+const lastLogs = new Map();
 
 function rtmpUrlFor(key) {
   return `rtmp://127.0.0.1:${config.RTMP_PORT}/live/${key}`;
@@ -40,20 +44,62 @@ function shuffleArray(arr) {
   return a;
 }
 
-// Gera o arquivo de concat do ffmpeg com os vídeos da playlist.
-// No modo "normalized" usa os arquivos pré-convertidos (streaming via -c copy);
-// nos demais modos usa os arquivos originais.
-function buildConcatFile(channel) {
-  const state = db.get();
-  const byId = new Map(state.videos.map((v) => [v.id, v]));
-  let entries = (channel.videoIds || [])
-    .map((vid) => byId.get(vid))
-    .filter(Boolean);
+// Bloco da grade ativo para o canal neste momento (horário local do servidor;
+// defina TZ no ambiente para o fuso correto).
+function currentBlock(channel, now) {
+  const d = now || new Date();
+  const day = d.getDay();
+  const mins = d.getHours() * 60 + d.getMinutes();
+  for (const b of channel.schedule || []) {
+    const [sh, sm] = b.start.split(':').map(Number);
+    const [eh, em] = b.end.split(':').map(Number);
+    if ((b.days || []).includes(day) && mins >= sh * 60 + sm && mins < eh * 60 + em) return b;
+  }
+  return null;
+}
 
+function playlistIds(playlistId) {
+  const pl = db.get().playlists.find((p) => p.id === playlistId);
+  return pl ? (pl.videoIds || []).slice() : [];
+}
+
+// Resolve ids -> vídeos utilizáveis pelo canal (no modo "normalized" só os
+// que já terminaram de normalizar).
+function selectEntries(channel, ids) {
+  const byId = new Map(db.get().videos.map((v) => [v.id, v]));
+  let entries = ids.map((vid) => byId.get(vid)).filter(Boolean);
   if (channel.mode === 'normalized') {
     entries = entries.filter((v) => v.normalized && v.normalized.status === 'ready');
   }
+  return entries;
+}
+
+// Gera o arquivo de concat do ffmpeg: playlist do bloco da grade ativo (ou a
+// padrão), com embaralhamento opcional e vinhetas intercaladas a cada N
+// vídeos. Registra no entry a ordem de reprodução (para o "agora exibindo")
+// e a assinatura da fonte (para o agendador detectar trocas de bloco).
+function buildConcatFile(channel, entry) {
+  const block = currentBlock(channel);
+  let source = block ? `block:${block.id}` : 'default';
+  let entries = selectEntries(channel, playlistIds(block ? block.playlistId : channel.defaultPlaylistId));
+  if (block && entries.length === 0) {
+    // Bloco sem vídeos utilizáveis: cai para a playlist padrão
+    entries = selectEntries(channel, playlistIds(channel.defaultPlaylistId));
+    source = `fallback:${block.id}`;
+  }
   if (channel.shuffle) entries = shuffleArray(entries);
+
+  // Vinhetas/comerciais a cada N vídeos de conteúdo
+  const breaks = selectEntries(channel, channel.breakVideoIds || []);
+  if (breaks.length > 0 && channel.breakEvery > 0 && entries.length > 0) {
+    const woven = [];
+    entries.forEach((v, i) => {
+      woven.push(v);
+      if ((i + 1) % channel.breakEvery === 0) woven.push(...breaks);
+    });
+    entries = woven;
+  }
+
   if (entries.length === 0) return null;
 
   const lines = ['ffconcat version 1.0'];
@@ -66,6 +112,14 @@ function buildConcatFile(channel) {
   }
   const listPath = path.join(config.DATA_DIR, `playlist-${channel.id}.txt`);
   fs.writeFileSync(listPath, lines.join('\n') + '\n');
+
+  if (entry) {
+    entry.sourceKind = 'playlist';
+    entry.sourceSig = source;
+    entry.playOrder = entries.map((v) => ({
+      id: v.id, name: v.name, duration: v.durationSec || v.duration || 0
+    }));
+  }
   return listPath;
 }
 
@@ -103,8 +157,30 @@ function outputArgs(key) {
   return ['-f', 'flv', '-flvflags', 'no_duration_filesize', rtmpUrlFor(key)];
 }
 
-function buildChannelArgs(channel) {
-  const listPath = buildConcatFile(channel);
+function buildChannelArgs(channel, entry) {
+  // Fallback de live: se a entrada ao vivo vinculada estiver publicando,
+  // o canal retransmite a live em vez da playlist.
+  const liveInput = channel.liveInputId
+    ? db.get().inputs.find((i) => i.id === channel.liveInputId)
+    : null;
+  if (liveInput && rtmpServer.isKeyLive(liveInput.key)) {
+    if (entry) {
+      entry.sourceKind = 'live';
+      entry.sourceSig = `live:${liveInput.key}`;
+      entry.playOrder = null;
+    }
+    const liveArgs = [
+      '-hide_banner', '-loglevel', 'warning',
+      '-nostats', '-progress', 'pipe:1',
+      '-i', `rtmp://127.0.0.1:${config.RTMP_PORT}/live/${liveInput.key}`
+    ];
+    if (channel.mode === 'transcode') liveArgs.push(...transcodeArgs(channel));
+    else liveArgs.push('-c', 'copy');
+    liveArgs.push(...outputArgs(channel.key));
+    return liveArgs;
+  }
+
+  const listPath = buildConcatFile(channel, entry);
   if (!listPath) return null;
   const args = [
     '-hide_banner', '-loglevel', 'warning',
@@ -323,7 +399,7 @@ async function spawnStream(id, type, buildArgs, getItem) {
   const existing = running.get(id);
   const entry = existing || {
     proc: null, helper: null, type, status: 'starting', startedAt: null,
-    restarts: 0, backoff: 1000, logs: [], stopping: false,
+    restarts: 0, backoff: 1000, logs: lastLogs.get(id) || [], stopping: false,
     retryTimer: null, watchdog: null, lastProgressAt: 0, stats: {}
   };
   entry.type = type;
@@ -441,6 +517,7 @@ async function spawnStream(id, type, buildArgs, getItem) {
     pushLog(entry, `ffmpeg encerrou (code=${code} signal=${signal || '-'})`);
     if (entry.stopping) {
       entry.status = 'stopped';
+      lastLogs.set(id, entry.logs);
       running.delete(id);
       return;
     }
@@ -503,14 +580,46 @@ function restartIfRunning(id, type) {
   setTimeout(() => tryStart(14), 800);
 }
 
+// Calcula o vídeo no ar e o próximo a partir da posição do ffmpeg (outTime)
+// dentro do ciclo da playlist — sem precisar de processo extra.
+function nowPlayingOf(entry) {
+  if (!entry || entry.sourceKind !== 'playlist' || !entry.playOrder) return null;
+  const order = entry.playOrder;
+  const out = entry.stats ? entry.stats.outTimeSec : null;
+  if (out == null || order.length === 0) return null;
+  const total = order.reduce((s, v) => s + (v.duration || 0), 0);
+  if (total <= 0) return null;
+  let pos = out % total;
+  for (let i = 0; i < order.length; i++) {
+    if (pos < (order[i].duration || 0)) {
+      return {
+        now: { id: order[i].id, name: order[i].name },
+        next: { id: order[(i + 1) % order.length].id, name: order[(i + 1) % order.length].name }
+      };
+    }
+    pos -= order[i].duration || 0;
+  }
+  return null;
+}
+
 function statusOf(id) {
   const entry = running.get(id);
-  if (!entry) return { status: 'stopped', restarts: 0, uptime: 0, stats: {}, logs: [] };
+  if (!entry) {
+    return {
+      status: 'stopped', restarts: 0, uptime: 0, stats: {},
+      sourceKind: null, nowPlaying: null, upNext: null,
+      logs: (lastLogs.get(id) || []).slice(-LOG_LINES)
+    };
+  }
+  const np = nowPlayingOf(entry);
   return {
     status: entry.status,
     restarts: entry.restarts,
     uptime: entry.startedAt && entry.status === 'running' ? Date.now() - entry.startedAt : 0,
     stats: entry.stats || {},
+    sourceKind: entry.status === 'running' ? (entry.sourceKind || null) : null,
+    nowPlaying: np ? np.now : null,
+    upNext: np ? np.next : null,
     logs: entry.logs.slice(-LOG_LINES)
   };
 }
@@ -538,6 +647,51 @@ function autostartAll() {
 function shutdown() {
   for (const id of running.keys()) stop(id);
 }
+
+// ---------------------------------------------------------------------------
+// Agendador da grade: confere a cada 20s se algum canal no ar precisa trocar
+// de fonte (entrou/saiu um bloco da grade, ou a live vinculada ligou/desligou)
+// e reinicia o ffmpeg para reconstruir o conteúdo.
+// ---------------------------------------------------------------------------
+
+function desiredSourceSig(channel) {
+  const liveInput = channel.liveInputId
+    ? db.get().inputs.find((i) => i.id === channel.liveInputId)
+    : null;
+  if (liveInput && rtmpServer.isKeyLive(liveInput.key)) return `live:${liveInput.key}`;
+  const block = currentBlock(channel);
+  return block ? `block:${block.id}` : 'default';
+}
+
+function checkChannelSource(channel, reason) {
+  const entry = running.get(channel.id);
+  if (!entry || entry.type !== 'channel' || entry.status !== 'running') return;
+  const desired = desiredSourceSig(channel);
+  if (entry.sourceSig === desired) return;
+  // 'fallback:<block>' significa que o bloco estava sem vídeos utilizáveis e
+  // a playlist padrão assumiu — não fica reiniciando em loop por causa disso.
+  if (desired.startsWith('block:') && entry.sourceSig === `fallback:${desired.slice(6)}`) return;
+  pushLog(entry, `Trocando fonte (${reason}): ${entry.sourceSig || '?'} -> ${desired}`);
+  restartIfRunning(channel.id, 'channel');
+}
+
+setInterval(() => {
+  for (const c of db.get().channels) {
+    try { checkChannelSource(c, 'grade'); } catch (e) { console.error('[agendador]', e.message); }
+  }
+}, 20000);
+
+// Live vinculada ligou/desligou: reage na hora, sem esperar o tick
+function handleLiveEdge(key) {
+  const state = db.get();
+  for (const c of state.channels) {
+    if (!c.liveInputId) continue;
+    const input = state.inputs.find((i) => i.id === c.liveInputId);
+    if (input && input.key === key) checkChannelSource(c, 'entrada ao vivo');
+  }
+}
+rtmpServer.events.on('publish', handleLiveEdge);
+rtmpServer.events.on('unpublish', handleLiveEdge);
 
 module.exports = {
   startChannel, startRelay, stop, restartIfRunning,

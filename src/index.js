@@ -26,6 +26,7 @@ app.post('/api/logout', auth.logout);
 app.get('/api/me', auth.requireAuth, (req, res) => res.json({ user: req.user }));
 
 app.use('/api/videos', auth.requireAuth, require('./routes/videos'));
+app.use('/api/playlists', auth.requireAuth, require('./routes/playlists'));
 app.use('/api/channels', auth.requireAuth, require('./routes/channels'));
 app.use('/api/relays', auth.requireAuth, require('./routes/relays'));
 app.use('/api/inputs', auth.requireAuth, require('./routes/inputs'));
@@ -37,6 +38,7 @@ app.get('/api/status', auth.requireAuth, (req, res) => {
     live: rtmpServer.liveStreams(),
     counts: {
       videos: state.videos.length,
+      playlists: state.playlists.length,
       channels: state.channels.length,
       relays: state.relays.length,
       inputs: state.inputs.length

@@ -2,10 +2,24 @@
 // Publicações são validadas contra as chaves cadastradas (canais, relays e
 // entradas ao vivo), a menos que ALLOW_ANY_PUBLISH=true.
 const NodeMediaServer = require('node-media-server');
+const { EventEmitter } = require('events');
 const config = require('./config');
 const db = require('./db');
 
 let nms = null;
+
+// Eventos de publicação ('publish'/'unpublish' com a chave) e registro das
+// chaves no ar — usados pelo fallback de live dos canais.
+const events = new EventEmitter();
+const publishing = new Set();
+
+function keyOf(streamPath) {
+  return (streamPath || '').split('/').pop();
+}
+
+function isKeyLive(key) {
+  return publishing.has(key);
+}
 
 function knownKeys() {
   const state = db.get();
@@ -35,12 +49,24 @@ function start() {
 
   nms.on('prePublish', (id, streamPath, args) => {
     if (config.ALLOW_ANY_PUBLISH) return;
-    const key = (streamPath || '').split('/').pop();
+    const key = keyOf(streamPath);
     if (!knownKeys().has(key)) {
       console.log(`[rtmp] publicação rejeitada (chave desconhecida): ${streamPath}`);
       const session = nms.getSession(id);
       if (session) session.reject();
     }
+  });
+
+  nms.on('postPublish', (id, streamPath) => {
+    const key = keyOf(streamPath);
+    publishing.add(key);
+    events.emit('publish', key);
+  });
+
+  nms.on('donePublish', (id, streamPath) => {
+    const key = keyOf(streamPath);
+    publishing.delete(key);
+    events.emit('unpublish', key);
   });
 
   nms.run();
@@ -71,4 +97,4 @@ function liveStreams() {
   return result;
 }
 
-module.exports = { start, liveStreams };
+module.exports = { start, liveStreams, isKeyLive, events };
