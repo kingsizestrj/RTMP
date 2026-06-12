@@ -87,6 +87,8 @@ ffmpeg -i entrada.mp4 \
 
 (Se mudou o perfil via `NORMALIZE_*`, ajuste resolução/fps/bitrates de acordo. `NORMALIZE_SMART=false` desativa a detecção e força re-encode sempre.)
 
+**No Windows**, use a ferramenta gráfica em [`tools/normalizador-windows`](tools/normalizador-windows/LEIA-ME.md): duplo clique no `Normalizador.bat`, arraste os vídeos e pronto — ela baixa o FFmpeg sozinha, aplica o mesmo perfil e a mesma detecção inteligente do servidor (inclusive avisa quando o vídeo já está no padrão e nem precisa converter).
+
 ### Modos de saída dos canais
 
 - **⚡ Normalizado** (padrão, recomendado): cada vídeo é convertido **uma única vez** no upload para um perfil uniforme (H.264/AAC, em background e com prioridade baixa de CPU). O streaming usa `-c copy` — **CPU quase zero durante a transmissão**, sem risco de travar por falta de processamento.
