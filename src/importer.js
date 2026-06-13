@@ -84,6 +84,7 @@ function download(job, url, outFile) {
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) { return reject(new Error(err.message)); }
     try { os.setPriority(proc.pid, 10); } catch {}
+    job.proc = proc;
     let tail = '';
     const onData = (d) => {
       const s = d.toString();
@@ -93,8 +94,9 @@ function download(job, url, outFile) {
     };
     proc.stdout.on('data', onData);
     proc.stderr.on('data', onData);
-    proc.on('error', (err) => reject(new Error(`${err.message} (yt-dlp instalado?)`)));
+    proc.on('error', (err) => { job.proc = null; reject(new Error(`${err.message} (yt-dlp instalado?)`)); });
     proc.on('exit', (code) => {
+      job.proc = null;
       if (code === 0 && fs.existsSync(outFile)) return resolve();
       reject(new Error(tail.trim().split('\n').pop() || `download falhou (code=${code})`));
     });
@@ -144,6 +146,7 @@ async function runJob(job) {
 
     const tmpId = db.id();
     const tmp = path.join(config.UPLOAD_DIR, `${tmpId}.mp4`);
+    job.tmp = tmp;
     job.message = 'baixando...';
     await download(job, job.url, tmp);
 
@@ -166,12 +169,14 @@ async function runJob(job) {
         }
       }
       fs.unlink(tmp, () => {});
+      job.tmp = null;
       if (n === 0) throw new Error('não consegui cortar os capítulos');
       job.parts = n;
       job.status = 'done';
       job.message = `${n} episódio(s) adicionados ao acervo`;
     } else {
       await registerVideo(`${tmpId}.mp4`, m.title, dur);
+      job.tmp = null; // o arquivo virou item do acervo — não apagar ao remover o job
       if (job.splitChapters) job.message = 'sem capítulos — adicionado como vídeo único';
       else job.message = 'adicionado ao acervo';
       job.parts = 1;
@@ -179,7 +184,13 @@ async function runJob(job) {
     }
   } catch (err) {
     job.status = 'error';
-    job.message = err.message;
+    // Dica para os bloqueios mais comuns do YouTube em IP de servidor.
+    if (/not available|sign in|confirm you|\bbot\b|HTTP Error 4\d\d|consent|unavailable/i.test(err.message)) {
+      job.message = `${err.message} — provável bloqueio do YouTube ao IP do servidor: configure YTDLP_COOKIES e mantenha o yt-dlp atualizado.`;
+    } else {
+      job.message = err.message;
+    }
+    if (job.tmp) { fs.unlink(job.tmp, () => {}); job.tmp = null; }
     console.error('[importer]', job.url, err.message);
   }
 }
@@ -220,4 +231,27 @@ function enqueue({ url, splitChapters, playlist }) {
   return job;
 }
 
-module.exports = { enqueue, list };
+// Remove/cancela uma importação. Se estiver baixando, mata o yt-dlp e apaga o
+// arquivo parcial; se estiver na fila, tira da fila.
+function remove(id) {
+  const qi = queue.findIndex((j) => j.id === id);
+  if (qi >= 0) queue.splice(qi, 1);
+  const j = jobs.find((x) => x.id === id);
+  if (j) {
+    j.cancelled = true;
+    if (j.proc) { try { j.proc.kill('SIGKILL'); } catch {} j.proc = null; }
+    if (j.tmp) { fs.unlink(j.tmp, () => {}); j.tmp = null; }
+  }
+  const ji = jobs.findIndex((x) => x.id === id);
+  if (ji >= 0) jobs.splice(ji, 1);
+  return !!j;
+}
+
+// Limpa da lista as importações concluídas ou com erro.
+function clearFinished() {
+  for (let i = jobs.length - 1; i >= 0; i--) {
+    if (jobs[i].status === 'done' || jobs[i].status === 'error') jobs.splice(i, 1);
+  }
+}
+
+module.exports = { enqueue, list, remove, clearFinished };

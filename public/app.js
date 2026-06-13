@@ -334,11 +334,15 @@ function renderImports(imports) {
   if (!box) return;
   if (show.length === 0) { box.innerHTML = ''; return; }
   const icon = { queued: '⏳', downloading: '⬇️', processing: '⚙️', done: '✅', error: '❌' };
-  box.innerHTML = '<div class="muted" style="margin:8px 0 4px">Importações do YouTube</div>' + show.map((j) => `
+  const hasFinished = show.some((j) => j.status === 'done' || j.status === 'error');
+  box.innerHTML = `<div class="item-head" style="margin:8px 0 4px"><span class="muted">Importações do YouTube</span>
+      ${hasFinished ? '<button class="btn small" data-clear-imports>🧹 Limpar concluídas</button>' : ''}</div>` +
+    show.map((j) => `
     <div class="item" style="padding:10px 14px">
       <div class="item-head">
         <span>${icon[j.status] || ''} <b>${esc(j.title)}</b></span>
-        <span class="muted">${esc(j.message || j.status)}${j.status === 'downloading' && j.progress ? ` ${Math.round(j.progress)}%` : ''}</span>
+        <span class="muted" style="flex:1">${esc(j.message || j.status)}${j.status === 'downloading' && j.progress ? ` ${Math.round(j.progress)}%` : ''}</span>
+        <button class="btn small danger" data-rm-import="${j.id}" title="${j.status === 'downloading' || j.status === 'queued' ? 'Cancelar' : 'Remover da lista'}">🗑️</button>
       </div>
     </div>`).join('');
 }
@@ -1271,7 +1275,7 @@ function showPreview(key) {
 /* ---------- delegação de cliques ---------- */
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-edit-playlist],[data-del-playlist],[data-edit-campaign],[data-del-campaign],[data-regen-input],[data-del-input]');
+  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-edit-playlist],[data-del-playlist],[data-edit-campaign],[data-del-campaign],[data-rm-import],[data-clear-imports],[data-regen-input],[data-del-input]');
   if (!t) return;
   const d = t.dataset;
   // Evita clique duplo disparar a mesma ação duas vezes (ex.: dois starts)
@@ -1330,6 +1334,14 @@ document.addEventListener('click', async (e) => {
         await api(`/playlists/${d.delPlaylist}`, { method: 'DELETE' });
         toast('Playlist excluída.'); loadPlaylists();
       }
+    }
+    else if (d.rmImport != null) {
+      await api(`/videos/imports/${d.rmImport}`, { method: 'DELETE' });
+      loadVideos();
+    }
+    else if (d.clearImports != null) {
+      await api('/videos/imports', { method: 'DELETE' });
+      loadVideos();
     }
     else if (d.editCampaign) openCampaign(d.editCampaign);
     else if (d.delCampaign) {

@@ -66,6 +66,18 @@ router.get('/imports', (req, res) => {
   res.json(importer.list());
 });
 
+// Limpa as importações concluídas/com erro da lista.
+router.delete('/imports', (req, res) => {
+  importer.clearFinished();
+  res.json({ ok: true });
+});
+
+// Remove/cancela uma importação específica.
+router.delete('/imports/:id', (req, res) => {
+  importer.remove(req.params.id);
+  res.json({ ok: true });
+});
+
 router.post('/upload', upload.array('videos', 20), async (req, res) => {
   const state = db.get();
   const added = [];
