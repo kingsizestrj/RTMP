@@ -74,6 +74,7 @@ router.post('/', async (req, res) => {
     breakEvery: 0,         // a cada N vídeos de conteúdo (0 = sem intervalos)
     breakEveryMin: 0,      // a cada N minutos de conteúdo (modo 'minutes')
     liveInputId: '',       // entrada ao vivo prioritária (fallback)
+    seamless: false,       // transição sem corte entre blocos (concat pré-computado)
     logo: false,           // overlay de marca d'água (custa CPU — re-encoda)
     logoPosition: 'tr',    // tr | tl | br | bl
     shuffle: false,
@@ -115,6 +116,7 @@ router.patch('/:id', async (req, res) => {
   if (b.breakMode === 'count' || b.breakMode === 'minutes') channel.breakMode = b.breakMode;
   if (Number.isInteger(b.breakEvery) && b.breakEvery >= 0 && b.breakEvery <= 100) channel.breakEvery = b.breakEvery;
   if (Number.isInteger(b.breakEveryMin) && b.breakEveryMin >= 0 && b.breakEveryMin <= 600) channel.breakEveryMin = b.breakEveryMin;
+  if (typeof b.seamless === 'boolean') channel.seamless = b.seamless;
   if (typeof b.logo === 'boolean') channel.logo = b.logo;
   if (['tr', 'tl', 'br', 'bl'].includes(b.logoPosition)) channel.logoPosition = b.logoPosition;
   if (typeof b.liveInputId === 'string') {

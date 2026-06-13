@@ -67,6 +67,10 @@ module.exports = {
   // De quanto em quanto tempo o agendador confere se a grade mudou de bloco.
   SCHEDULER_INTERVAL_SEC: parseInt(process.env.SCHEDULER_INTERVAL_SEC || '20', 10),
 
+  // Transição sem corte (modo emissora): a grade é pré-computada para este
+  // horizonte (segundos) e encadeada num único fluxo; ao fim, regenera.
+  SEAMLESS_HORIZON_SEC: parseInt(process.env.SEAMLESS_HORIZON_SEC || '21600', 10),
+
   // Watchdog: reinicia o ffmpeg se ficar este tempo sem progresso (0 desativa)
   STALL_TIMEOUT_SEC: parseInt(process.env.STALL_TIMEOUT_SEC || '45', 10),
 

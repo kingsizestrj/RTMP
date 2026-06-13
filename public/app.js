@@ -588,6 +588,7 @@ async function loadChannels() {
           <div class="item-sub">
             ${c.defaultPlaylistSize} vídeo(s) na playlist padrão${c.mode === 'normalized' && c.readyCount < c.defaultPlaylistSize ? ` <span style="color:var(--yellow)">(${c.readyCount} normalizados)</span>` : ''}
             ${(c.schedule || []).length ? ` · 📅 ${c.schedule.length} bloco(s) na grade` : ''}
+            ${c.seamless && (c.schedule || []).length ? ' · ✨ sem corte' : ''}
             ${(c.breakVideoIds || []).length && ((c.breakMode === 'minutes' && c.breakEveryMin > 0) || (c.breakMode !== 'minutes' && c.breakEvery > 0))
               ? ` · 📣 vinhetas ${c.breakMode === 'minutes' ? `a cada ${c.breakEveryMin}min` : `a cada ${c.breakEvery} vídeo(s)`}` : ''}
             ${c.liveInputId ? ' · 🎥 fallback de live' : ''}
@@ -640,6 +641,8 @@ async function editChannel(id) {
       <label>📅 Grade de programação (horário do servidor) — escolha uma playlist e pinte os horários; clique e arraste. A borracha limpa.</label>
       <div id="ch-palette" class="palette"></div>
       <div id="ch-grid-wrap" class="grid-wrap"></div>
+      <label class="checkbox-row" style="margin-top:8px"><input type="checkbox" id="ch-seamless" ${c.seamless ? 'checked' : ''}> ✨ Transição sem corte entre blocos (modo emissora)</label>
+      <p class="muted">Encadeia os blocos num fluxo contínuo — a virada de grade não tem o corte de ~2s. A entrada/saída de live ainda corta. Obs.: o selo de classificação reflete o bloco do início do fluxo (regenera a cada ${'6h'} ou ao editar).</p>
     </div>
     <div class="form-row">
       <label>📣 Vinhetas/comerciais</label>
@@ -825,6 +828,7 @@ async function editChannel(id) {
           breakEvery: parseInt($('#ch-break-every').value, 10) || 0,
           breakEveryMin: parseInt($('#ch-break-min').value, 10) || 0,
           liveInputId: $('#ch-live-input').value,
+          seamless: $('#ch-seamless').checked,
           logo: $('#ch-logo').checked,
           logoPosition: $('#ch-logo-pos').value,
           mode: $('#ch-mode').value,

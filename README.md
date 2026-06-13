@@ -4,7 +4,7 @@ Servidor RTMP com painel de gerência web. Permite:
 
 - **🎬 Acervo de vídeos** — upload de vídeos pelo painel (drag & drop, multi-arquivo, barra de progresso) e divisor de episódios (✂️ corta um arquivo grande em partes, sem re-encode)
 - **🎞 Playlists** — listas ordenadas reutilizáveis, com indicação de onde são usadas
-- **📺 Canais (emissora 24/7)** — playlist padrão em loop + **grade de programação visual** (grade de 30 min × 7 dias, pintável; blocos podem virar a meia-noite), **transição suave** (espera o programa atual terminar antes de trocar de bloco), **vinhetas/comerciais** por contagem ou por minutos, **logo/marca d'água** e **"agora exibindo / a seguir"** em tempo real
+- **📺 Canais (emissora 24/7)** — playlist padrão em loop + **grade de programação visual** (grade de 30 min × 7 dias, pintável; blocos podem virar a meia-noite), **transição suave** (espera o programa atual terminar antes de trocar de bloco), **✨ transição sem corte** opcional (modo emissora — encadeia os blocos num fluxo contínuo, sem o corte de ~2s na virada), **vinhetas/comerciais** por contagem ou por minutos, **logo/marca d'água** e **"agora exibindo / a seguir"** em tempo real
 - **🔊 Loudness EBU R128** — o volume é padronizado no upload (-16 LUFS), acabando com o "comercial mais alto que o desenho"
 - **🔞 Classificação indicativa** — cada playlist (programa) tem uma classificação; o selo oficial (L/10/12/14/16/18) aparece no canto quando ela está no ar
 - **📢 Comerciais (campanhas)** — agende um vídeo de anúncio por janela de datas e canais; ele entra nos intervalos automaticamente
@@ -68,6 +68,7 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
 3. **Crie um canal** na aba *Canais*, escolha a **playlist padrão** e clique em **Iniciar**. Opcionalmente configure:
    - **📅 Grade de programação visual**: escolha uma playlist na paleta e **pinte os horários** na grade (30 min × 7 dias, clicando e arrastando; a borracha limpa). Fora dos blocos pintados, vale a playlist padrão. Blocos podem **virar a meia-noite** (ex.: 23:00→02:00 para o corujão). O horário é o do servidor — defina `TZ` (ex.: `America/Sao_Paulo`) no `.env`/compose.
    - **✂️ Transição suave**: ao trocar de bloco, o canal **espera o programa atual terminar** antes de cortar (sem corte no meio do episódio), respeitando o limite `BLOCK_GRACE_MAX_SEC` (padrão 10 min — além disso corta mesmo, ex.: se um bloco pegou o meio de um filme).
+   - **✨ Transição sem corte (modo emissora)**: marque para encadear os blocos num **fluxo contínuo** — a virada de grade deixa de ter o corte de ~2s (entrada/saída de *live* ainda corta). A grade é pré-computada por `SEAMLESS_HORIZON_SEC` (padrão 6 h) e regenerada ao fim do horizonte. Observação: nesse modo o selo de classificação reflete o bloco do início do fluxo (atualiza na regeneração), não exatamente na virada.
    - **📣 Vinhetas**: vídeos inseridos a cada N vídeos **ou** a cada N minutos de conteúdo.
    - **🎨 Logo/marca d'água**: envie um PNG (global) e ative por canal, escolhendo o canto. ⚠️ Ativar a logo re-encoda o vídeo (sai do modo cópia direta — custa CPU).
    - **🎥 Fonte ao vivo prioritária**: uma entrada OBS **ou um relay**; quando publicar, o canal corta para a live; quando cair, volta para a programação (a troca leva ~2s).
@@ -134,6 +135,7 @@ ffmpeg -i entrada.mp4 \
 | `STALL_TIMEOUT_SEC` | `45` | Watchdog: reinicia o ffmpeg se ficar este tempo sem progresso (`0` desativa) |
 | `BLOCK_GRACE_MAX_SEC` | `600` | Espera máxima pelo fim do programa atual na troca de bloco da grade |
 | `SCHEDULER_INTERVAL_SEC` | `20` | Frequência com que o agendador confere a grade |
+| `SEAMLESS_HORIZON_SEC` | `21600` | Horizonte pré-computado da transição sem corte (regenera ao fim) |
 | `TZ` | *(do sistema)* | Fuso horário usado pela grade de programação |
 | `FFMPEG_THREADS` | *(auto)* | Limita threads do ffmpeg nos streams ao vivo |
 | `NORMALIZE_ENABLED` | `true` | Normalizar vídeos no upload |

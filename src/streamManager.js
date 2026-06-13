@@ -134,53 +134,55 @@ function activeAds(channel) {
 }
 
 function wrapProgram(v) { return { v, kind: 'program', name: v.name }; }
+function itemDur(it) { return it.v.durationSec || it.v.duration || 0; }
 
-// Gera o arquivo de concat do ffmpeg: playlist do bloco da grade ativo (ou a
-// padrão), com embaralhamento opcional e, nos intervalos, comerciais ativos +
-// vinhetas — por contagem (a cada N vídeos) ou por tempo (a cada N minutos).
-// Registra no entry a ordem de reprodução (com o tipo de cada item, para o
-// "agora exibindo" e o as-run) e a assinatura da fonte.
-function buildConcatFile(channel, entry) {
-  const block = currentBlock(channel);
-  let source = block ? `block:${block.id}` : 'default';
-  let content = selectEntries(channel, playlistIds(block ? block.playlistId : channel.defaultPlaylistId));
-  if (block && content.length === 0) {
-    content = selectEntries(channel, playlistIds(channel.defaultPlaylistId));
-    source = `fallback:${block.id}`;
-  }
-  if (channel.shuffle) content = shuffleArray(content);
-
-  let items = content.map(wrapProgram);
-
-  // Bloco de intervalo = comerciais ativos + vinhetas fixas do canal
-  const breakItems = [
+// Bloco de intervalo do canal = comerciais ativos + vinhetas fixas.
+function breakItemsFor(channel) {
+  return [
     ...activeAds(channel),
     ...selectEntries(channel, channel.breakVideoIds || []).map((v) => ({ v, kind: 'break', name: v.name }))
   ];
-  if (breakItems.length > 0 && items.length > 0) {
-    const dur = (it) => it.v.durationSec || it.v.duration || 0;
-    if (channel.breakMode === 'minutes' && channel.breakEveryMin > 0) {
-      const threshold = channel.breakEveryMin * 60;
-      const woven = [];
-      let acc = 0;
-      for (const it of items) {
-        woven.push(it);
-        acc += dur(it);
-        if (acc >= threshold) { woven.push(...breakItems); acc = 0; }
-      }
-      items = woven;
-    } else if (channel.breakEvery > 0) {
-      const woven = [];
-      items.forEach((it, i) => {
-        woven.push(it);
-        if ((i + 1) % channel.breakEvery === 0) woven.push(...breakItems);
-      });
-      items = woven;
+}
+
+// Intercala os intervalos no conteúdo: por contagem (a cada N vídeos) ou por
+// tempo (a cada N minutos de conteúdo acumulado).
+function weave(channel, items, breakItems) {
+  if (!breakItems.length || !items.length) return items;
+  if (channel.breakMode === 'minutes' && channel.breakEveryMin > 0) {
+    const threshold = channel.breakEveryMin * 60;
+    const out = [];
+    let acc = 0;
+    for (const it of items) {
+      out.push(it);
+      acc += itemDur(it);
+      if (acc >= threshold) { out.push(...breakItems); acc = 0; }
     }
+    return out;
   }
+  if (channel.breakEvery > 0) {
+    const out = [];
+    items.forEach((it, i) => {
+      out.push(it);
+      if ((i + 1) % channel.breakEvery === 0) out.push(...breakItems);
+    });
+    return out;
+  }
+  return items;
+}
 
-  if (items.length === 0) return null;
+// Conteúdo (já com intervalos) de um bloco/playlist, embaralhado se for o caso.
+function contentItemsFor(channel, playlistId, fallbackPlaylistId) {
+  let content = selectEntries(channel, playlistIds(playlistId));
+  if (content.length === 0 && fallbackPlaylistId) {
+    content = selectEntries(channel, playlistIds(fallbackPlaylistId));
+  }
+  if (channel.shuffle) content = shuffleArray(content);
+  return weave(channel, content.map(wrapProgram), breakItemsFor(channel));
+}
 
+// Escreve o arquivo de concat e registra no entry a ordem de reprodução.
+function writeConcat(channel, items, entry, sourceSig) {
+  if (!items || items.length === 0) return null;
   const lines = ['ffconcat version 1.0'];
   for (const { v } of items) {
     const file = channel.mode === 'normalized'
@@ -190,17 +192,71 @@ function buildConcatFile(channel, entry) {
   }
   const listPath = path.join(config.DATA_DIR, `playlist-${channel.id}.txt`);
   fs.writeFileSync(listPath, lines.join('\n') + '\n');
-
   if (entry) {
     entry.sourceKind = 'playlist';
-    entry.sourceSig = source;
+    entry.sourceSig = sourceSig;
     entry.playOrder = items.map((it) => ({
-      id: it.v.id, name: it.name, duration: it.v.durationSec || it.v.duration || 0,
+      id: it.v.id, name: it.name, duration: itemDur(it),
       kind: it.kind, campaignId: it.campaignId || null
     }));
   }
   return listPath;
 }
+
+// Concat do bloco atual (ou playlist padrão), tocado em loop (-stream_loop -1).
+// Usado quando a transição sem corte está desligada.
+function buildConcatFile(channel, entry) {
+  const block = currentBlock(channel);
+  let sig = block ? `block:${block.id}` : 'default';
+  const items = contentItemsFor(channel, block ? block.playlistId : channel.defaultPlaylistId, channel.defaultPlaylistId);
+  // Se o bloco estava vazio e caímos na padrão, marca como fallback.
+  if (block && selectEntries(channel, playlistIds(block.playlistId)).length === 0) sig = `fallback:${block.id}`;
+  return writeConcat(channel, items, entry, sig);
+}
+
+// Transição sem corte (abordagem A): pré-computa a linha do tempo das próximas
+// horas, encadeando os blocos da grade como arquivos consecutivos. O ffmpeg
+// flui pela virada de bloco SEM reiniciar (concat demuxer toca os arquivos em
+// sequência, sem buraco). A troca acontece na fronteira do programa (o vídeo
+// em andamento termina antes), igual à transição suave. A lista é finita; ao
+// terminar o horizonte, o ffmpeg encerra e o auto-restart regenera a partir do
+// novo "agora" (único ponto com um pequeno corte, a cada SEAMLESS_HORIZON_SEC).
+function buildSeamlessConcat(channel, entry) {
+  const horizon = Math.max(600, config.SEAMLESS_HORIZON_SEC) * 1000;
+  const start = Date.now();
+  const cursor = new Date(start);
+  const items = [];
+  let curSig = null;
+  let woven = [];
+  let idx = 0;
+  let guard = 0;
+  const MAX_ITEMS = 200000;
+  while (cursor.getTime() - start < horizon && items.length < MAX_ITEMS && guard++ < 500000) {
+    const block = currentBlock(channel, cursor);
+    const sig = block ? `b:${block.id}` : 'default';
+    if (sig !== curSig) {
+      curSig = sig;
+      woven = contentItemsFor(channel, block ? block.playlistId : channel.defaultPlaylistId, channel.defaultPlaylistId);
+      idx = 0;
+    }
+    if (woven.length === 0) { cursor.setTime(cursor.getTime() + 60000); continue; } // bloco vazio: pula 1 min
+    const it = woven[idx % woven.length];
+    idx += 1;
+    const d = itemDur(it);
+    if (d <= 0) { // sem duração: evita loop infinito
+      if (idx % woven.length === 0) cursor.setTime(cursor.getTime() + 1000);
+      continue;
+    }
+    items.push(it);
+    cursor.setTime(cursor.getTime() + d * 1000);
+  }
+  return writeConcat(channel, items, entry, 'seamless');
+}
+
+function seamlessActive(channel) {
+  return !!channel.seamless && (channel.schedule || []).length > 0;
+}
+
 
 const PRESETS = new Set(['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium']);
 
@@ -373,17 +429,19 @@ function buildChannelArgs(channel, entry) {
 
   const block = currentBlock(channel);
   const rating = activeRating(channel, block);
-  const listPath = buildConcatFile(channel, entry);
+  const seamless = seamlessActive(channel);
+  const listPath = seamless ? buildSeamlessConcat(channel, entry) : buildConcatFile(channel, entry);
   if (!listPath) return null;
   const args = [
     '-hide_banner', '-loglevel', 'warning',
     '-nostats', '-progress', 'pipe:1',
     '-re',
-    '-fflags', '+genpts',
-    '-stream_loop', '-1',
-    '-f', 'concat', '-safe', '0',
-    '-i', listPath
+    '-fflags', '+genpts'
   ];
+  // Modo normal: loop infinito da playlist do bloco. Modo sem corte: lista
+  // finita já encadeando os blocos (regenera ao fim do horizonte).
+  if (!seamless) args.push('-stream_loop', '-1');
+  args.push('-f', 'concat', '-safe', '0', '-i', listPath);
   if (needsEncode(channel, rating)) {
     // Overlay (logo/classificação) ou transcode: re-encoda o vídeo. O áudio
     // segue em cópia (com bsf para o AAC em TS do modo normalized).
@@ -971,6 +1029,9 @@ function shutdown() {
 function desiredSourceSig(channel) {
   const liveSrc = liveSourceFor(channel);
   if (liveSrc && rtmpServer.isKeyLive(liveSrc.key)) return `live:${liveSrc.key}`;
+  // No modo sem corte, a virada de bloco já está encadeada no concat — não é
+  // uma troca de fonte (não reinicia). Só live entra/sai como troca.
+  if (seamlessActive(channel)) return 'seamless';
   const block = currentBlock(channel);
   return block ? `block:${block.id}` : 'default';
 }

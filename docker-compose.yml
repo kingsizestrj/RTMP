@@ -13,6 +13,7 @@ services:
       NODE_ENV: production
       # Fuso horário da grade de programação (ex.: America/Sao_Paulo)
       TZ: ${TZ:-}
+      SEAMLESS_HORIZON_SEC: ${SEAMLESS_HORIZON_SEC:-21600}
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASS: ${ADMIN_PASS:-admin}
       PUBLIC_HOST: ${PUBLIC_HOST:-}

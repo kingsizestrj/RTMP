@@ -42,6 +42,7 @@ function migrate(s) {
     if (typeof c.liveInputId !== 'string') { c.liveInputId = ''; changed = true; }
     if (typeof c.logo !== 'boolean') { c.logo = false; changed = true; }
     if (typeof c.logoPosition !== 'string') { c.logoPosition = 'tr'; changed = true; }
+    if (typeof c.seamless !== 'boolean') { c.seamless = false; changed = true; }
   }
   for (const p of s.playlists) {
     // Classificação indicativa do programa (''=sem; L,10,12,14,16,18)
