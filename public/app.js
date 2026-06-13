@@ -42,6 +42,7 @@ function urls(key) {
   return {
     rtmp: `rtmp://${host()}:${serverInfo.rtmpPort}/live/${key}`,
     flv: `http://${host()}:${serverInfo.httpMediaPort}/live/${key}.flv`,
+    hls: `http://${host()}:${serverInfo.httpMediaPort}/live/${key}/index.m3u8`,
     publishUrl: `rtmp://${host()}:${serverInfo.rtmpPort}/live`
   };
 }
@@ -577,6 +578,7 @@ async function loadChannels() {
                 ? `<button class="btn small" data-stop-channel="${c.id}">⏹ Parar</button>`
                 : `<button class="btn small primary" data-start-channel="${c.id}">▶ Iniciar</button>`}
               <button class="btn small" data-preview="${esc(c.key)}">👁 Preview</button>
+              <a class="btn small" href="watch.html?k=${esc(c.key)}&n=${encodeURIComponent(c.name)}" target="_blank">📺 Página</a>
               <button class="btn small" data-edit-channel="${c.id}">⚙️ Editar</button>
               <button class="btn small" data-logs-channel="${c.id}">📜 Logs</button>
               <button class="btn small danger" data-del-channel="${c.id}">🗑️</button>
@@ -594,7 +596,7 @@ async function loadChannels() {
             ${c.shuffle ? ' · 🔀 aleatório' : ''}${c.autostart ? ' · ⏯ autostart' : ''}
             ${c.restarts ? ` · ${c.restarts} restart(s)` : ''}${speedInfo(c)}
           </div>
-          ${urlRow('RTMP', u.rtmp)}${urlRow('FLV', u.flv)}
+          ${urlRow('RTMP', u.rtmp)}${urlRow('HLS', u.hls)}${urlRow('FLV', u.flv)}
         </div>`;
       }).join('');
 }

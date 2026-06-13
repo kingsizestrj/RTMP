@@ -12,6 +12,7 @@ Servidor RTMP com painel de gerência web. Permite:
 - **🔁 Relays** — informe um link HTTP/HLS/RTMP/RTSP/SRT/UDP e ele é retransmitido como um novo link RTMP (com opção de loop para VOD)
 - **▶️ YouTube/Twitch** — cole o link de um vídeo ou live e o relay resolve a mídia real via yt-dlp automaticamente, renovando o link a cada reinício
 - **🎥 Entradas ao vivo** — gere chaves de stream para publicar do OBS/encoder e distribuir pelo link gerado
+- **📱 HLS + página de player público** — cada canal tem um link `.m3u8` (roda em iPhone, SmartTV e navegador) e uma página `watch.html` pronta para compartilhar (HLS com fallback FLV)
 - **👁 Preview no navegador** — assista qualquer stream direto no painel (HTTP-FLV + flv.js)
 - **📜 Logs em tempo real** — veja a saída do FFmpeg de cada canal/relay no painel
 - **⚡ Normalização no upload** — vídeos são pré-convertidos uma única vez para um perfil uniforme; a transmissão usa cópia direta com CPU quase zero
@@ -126,6 +127,7 @@ ffmpeg -i entrada.mp4 \
 | `CACHE_DIR` | `media/cache` | Cache dos vídeos baixados do YouTube |
 | `MAX_UPLOAD_MB` | `4096` | Tamanho máximo por arquivo de upload |
 | `ALLOW_ANY_PUBLISH` | `false` | Aceitar publicação RTMP com qualquer chave |
+| `HLS_ENABLED` | `true` | Gera HLS (.m3u8) de cada stream (remux, CPU baixa) |
 | `STALL_TIMEOUT_SEC` | `45` | Watchdog: reinicia o ffmpeg se ficar este tempo sem progresso (`0` desativa) |
 | `BLOCK_GRACE_MAX_SEC` | `600` | Espera máxima pelo fim do programa atual na troca de bloco da grade |
 | `SCHEDULER_INTERVAL_SEC` | `20` | Frequência com que o agendador confere a grade |
@@ -213,4 +215,5 @@ Cada canal/relay ativo é um processo FFmpeg supervisionado pelo app (logs, rest
 - Troque `ADMIN_PASS` antes de expor o painel.
 - O painel roda em HTTP puro; para acesso pela internet, coloque atrás de um reverse proxy com TLS (nginx/caddy).
 - Publicações RTMP com chave desconhecida são rejeitadas (a menos que `ALLOW_ANY_PUBLISH=true`).
-- A reprodução (play) dos streams é aberta — qualquer pessoa com o link assiste. Se precisar restringir, filtre as portas 1935/8000 no firewall.
+- **Canais e relays só podem ser publicados pelo próprio servidor (localhost)** — assim o link de reprodução (que contém a chave) pode ser exposto na página pública sem risco de alguém publicar/“sequestrar” o canal. Já as **entradas ao vivo (OBS)** aceitam publicação de qualquer lugar, pois é o objetivo delas (mantenha a chave da entrada em segredo).
+- A reprodução (play) dos streams é aberta — qualquer pessoa com o link assiste. Se precisar restringir, filtre as portas 1935/8000 no firewall ou coloque atrás de um proxy com autenticação.

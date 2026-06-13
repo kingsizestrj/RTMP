@@ -32,6 +32,16 @@ app.use('/api/relays', auth.requireAuth, require('./routes/relays'));
 app.use('/api/inputs', auth.requireAuth, require('./routes/inputs'));
 app.use('/api/settings', auth.requireAuth, require('./routes/settings'));
 
+// Config pública mínima para as páginas de player/guia (portas e host).
+app.get('/api/public/config', (req, res) => {
+  res.json({
+    httpMediaPort: config.HTTP_MEDIA_PORT,
+    rtmpPort: config.RTMP_PORT,
+    publicHost: config.PUBLIC_HOST,
+    hls: config.HLS_ENABLED
+  });
+});
+
 // Guia de programação (EPG) — público, sem login: nome do canal, no ar agora,
 // a seguir e a grade do dia. Não expõe chaves de stream.
 app.get('/api/public/epg', (req, res) => {

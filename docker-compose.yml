@@ -20,6 +20,7 @@ services:
       # Ajustes de desempenho (veja README — seção Desempenho)
       STALL_TIMEOUT_SEC: ${STALL_TIMEOUT_SEC:-45}
       GOP_CACHE: ${GOP_CACHE:-true}
+      HLS_ENABLED: ${HLS_ENABLED:-true}
       FFMPEG_THREADS: ${FFMPEG_THREADS:-}
       NORMALIZE_ENABLED: ${NORMALIZE_ENABLED:-true}
       NORMALIZE_RESOLUTION: ${NORMALIZE_RESOLUTION:-1280x720}

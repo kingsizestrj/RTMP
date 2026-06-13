@@ -101,6 +101,10 @@ module.exports = {
   // Se true, permite publicar no RTMP com qualquer chave (sem validação)
   ALLOW_ANY_PUBLISH: process.env.ALLOW_ANY_PUBLISH === 'true',
 
+  // Gera HLS (.m3u8) de cada stream — remux barato (-c copy). HLS roda em
+  // iPhone/SmartTV/navegador, onde o HTTP-FLV não funciona.
+  HLS_ENABLED: process.env.HLS_ENABLED !== 'false',
+
   // Cache de GOP do servidor RTMP: true = quem entra vê imagem na hora, mas
   // começa alguns segundos atrás da borda ao vivo (o player do painel persegue
   // a borda sozinho). false = entra colado no ao vivo, porém espera o próximo

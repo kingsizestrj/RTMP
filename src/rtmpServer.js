@@ -3,10 +3,25 @@
 // entradas ao vivo), a menos que ALLOW_ANY_PUBLISH=true.
 const NodeMediaServer = require('node-media-server');
 const { EventEmitter } = require('events');
+const fs = require('fs');
+const path = require('path');
 const config = require('./config');
 const db = require('./db');
 
 let nms = null;
+
+// O trans server (HLS) exige o caminho ABSOLUTO e executável do ffmpeg —
+// resolve o nome via PATH quando FFMPEG_PATH não é um caminho.
+function resolveFfmpeg() {
+  const p = config.FFMPEG_PATH;
+  if (p.includes('/')) return p;
+  for (const dir of (process.env.PATH || '').split(':')) {
+    if (!dir) continue;
+    const full = path.join(dir, p);
+    try { fs.accessSync(full, fs.constants.X_OK); return full; } catch {}
+  }
+  return p;
+}
 
 // Eventos de publicação ('publish'/'unpublish' com a chave) e registro das
 // chaves no ar — usados pelo fallback de live dos canais.
@@ -31,7 +46,7 @@ function knownKeys() {
 }
 
 function start() {
-  nms = new NodeMediaServer({
+  const conf = {
     rtmp: {
       port: config.RTMP_PORT,
       chunk_size: 60000,
@@ -45,16 +60,39 @@ function start() {
       mediaroot: config.DATA_DIR
     },
     logType: 2
-  });
+  };
+  // HLS: remux (-c copy) de todo stream da app 'live' para .m3u8 + segmentos.
+  if (config.HLS_ENABLED) {
+    conf.trans = {
+      ffmpeg: resolveFfmpeg(),
+      tasks: [{
+        app: 'live',
+        hls: true,
+        hlsFlags: '[hls_time=2:hls_list_size=4:hls_flags=delete_segments]'
+      }]
+    };
+  }
+  nms = new NodeMediaServer(conf);
 
   nms.on('prePublish', (id, streamPath, args) => {
     if (config.ALLOW_ANY_PUBLISH) return;
     const key = keyOf(streamPath);
-    if (!knownKeys().has(key)) {
-      console.log(`[rtmp] publicação rejeitada (chave desconhecida): ${streamPath}`);
-      const session = nms.getSession(id);
+    const state = db.get();
+    const isInput = state.inputs.some((i) => i.key === key);
+    const isChannelOrRelay = state.channels.some((c) => c.key === key) || state.relays.some((r) => r.key === key);
+    const session = nms.getSession(id);
+    if (isInput) return; // entradas (OBS) publicam de qualquer lugar
+    if (isChannelOrRelay) {
+      // Canais/relays só são publicados pelo nosso próprio ffmpeg (localhost).
+      // Isso impede que alguém com a chave (agora exposta no player público)
+      // sequestre o canal publicando conteúdo próprio.
+      if (session && session.isLocal) return;
+      console.log(`[rtmp] publicação rejeitada (canal/relay só do localhost): ${streamPath}`);
       if (session) session.reject();
+      return;
     }
+    console.log(`[rtmp] publicação rejeitada (chave desconhecida): ${streamPath}`);
+    if (session) session.reject();
   });
 
   nms.on('postPublish', (id, streamPath) => {
