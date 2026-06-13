@@ -232,30 +232,77 @@ function logoEnabled(channel) {
   return channel.logo && fs.existsSync(config.LOGO_PATH);
 }
 
-// Insere a logo (marca d'água) sobre o vídeo. Como overlay exige decodificar e
-// re-encodar o vídeo, isso custa CPU — o áudio segue em cópia quando possível.
-// `mainArgs` já contém o(s) -i da fonte principal; devolve os args completos
-// de saída (filtro + codecs), partindo do input de vídeo `vIndex`.
-function applyLogoArgs(channel, audioCopyable) {
-  const pos = LOGO_POS[channel.logoPosition] || LOGO_POS.tr;
-  // No modo transcode também normalizamos a resolução antes do overlay; nos
-  // demais (normalized/live) a fonte já vem no tamanho certo.
-  let filter;
+// Fonte para os textos sobrepostos (classificação indicativa).
+const FONT_CANDIDATES = [
+  config.FONT_PATH,
+  '/usr/share/fonts/ttf-dejavu/DejaVuSans-Bold.ttf',
+  '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+  '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf'
+].filter(Boolean);
+function findFont() {
+  return FONT_CANDIDATES.find((f) => { try { return fs.existsSync(f); } catch { return false; } });
+}
+
+// Cores oficiais da classificação indicativa (ClassInd/BR).
+const RATING_COLOR = { L: '0x009933', 10: '0x0a3bbf', 12: '0xf2c400', 14: '0xf07800', 16: '0xcc0000', 18: '0x000000' };
+
+// Filtro drawtext do selo de classificação no canto superior esquerdo.
+function ratingDraw(rating) {
+  const font = findFont();
+  if (!font || !RATING_COLOR[rating]) return null;
+  const fontcolor = rating === '12' ? 'black' : 'white';
+  return `drawtext=fontfile=${font}:text='${rating}':fontcolor=${fontcolor}:fontsize=34:` +
+    `box=1:boxcolor=${RATING_COLOR[rating]}@0.9:boxborderw=14:x=24:y=24`;
+}
+
+// Saída que re-encoda o vídeo aplicando, em sequência: escala (modo transcode),
+// overlay de logo e selo de classificação. Custa CPU (overlay exige re-encode),
+// mas o áudio segue em cópia quando possível. audioMode: 'copy-ts' | 'copy' |
+// 'encode'. Pressupõe que a fonte principal já é o input 0.
+function encodedTail(channel, audioMode, rating) {
+  const inputs = [];
+  const fc = [];
+  let cur = '[0:v]';
+  let li = 0;
+  const next = () => `[v${li++}]`;
+
   if (channel.mode === 'transcode') {
     const [w, h] = (channel.resolution || '1280x720').split('x').map(Number);
-    filter = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1[bg];[bg][1:v]overlay=${pos}[v]`;
-  } else {
-    filter = `[0:v][1:v]overlay=${pos}[v]`;
+    const o = next();
+    fc.push(`${cur}scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1${o}`);
+    cur = o;
   }
-  const out = [
-    '-i', config.LOGO_PATH,
-    '-filter_complex', filter,
-    '-map', '[v]', '-map', '0:a?',
-    ...x264VideoArgs(channel)
-  ];
-  if (audioCopyable) out.push('-c:a', 'copy', '-bsf:a', 'aac_adtstoasc');
-  else out.push('-c:a', 'aac', '-b:a', channel.audioBitrate || '128k', '-ar', '44100', '-ac', '2');
+  if (logoEnabled(channel)) {
+    inputs.push('-i', config.LOGO_PATH); // input 1
+    const o = next();
+    fc.push(`${cur}[1:v]overlay=${LOGO_POS[channel.logoPosition] || LOGO_POS.tr}${o}`);
+    cur = o;
+  }
+  const rd = rating ? ratingDraw(rating) : null;
+  if (rd) {
+    const o = next();
+    fc.push(`${cur}${rd}${o}`);
+    cur = o;
+  }
+  if (fc.length === 0) return null; // nada para sobrepor
+
+  const out = [...inputs, '-filter_complex', fc.join(';'), '-map', cur, '-map', '0:a?', ...x264VideoArgs(channel)];
+  if (audioMode === 'encode') out.push('-c:a', 'aac', '-b:a', channel.audioBitrate || '128k', '-ar', '44100', '-ac', '2');
+  else if (audioMode === 'copy-ts') out.push('-c:a', 'copy', '-bsf:a', 'aac_adtstoasc');
+  else out.push('-c:a', 'copy');
   return out;
+}
+
+// Precisa re-encodar o vídeo? (overlay de logo/classificação ou transcode)
+function needsEncode(channel, rating) {
+  return logoEnabled(channel) || !!(rating && RATING_COLOR[rating] && findFont()) || channel.mode === 'transcode';
+}
+
+// Classificação indicativa ativa: vem do programa (playlist) que está no ar.
+function activeRating(channel, block) {
+  const plId = block ? block.playlistId : channel.defaultPlaylistId;
+  const pl = db.get().playlists.find((p) => p.id === plId);
+  return pl ? (pl.rating || '') : '';
 }
 
 // Fonte ao vivo prioritária do canal: uma entrada (OBS) OU um relay.
@@ -287,13 +334,17 @@ function buildChannelArgs(channel, entry) {
       '-nostats', '-progress', 'pipe:1',
       '-i', `rtmp://127.0.0.1:${config.RTMP_PORT}/live/${liveSrc.key}`
     ];
-    if (logoEnabled(channel)) liveArgs.push(...applyLogoArgs(channel, false));
+    // Live geralmente não leva selo de classificação (esportes/jornalismo).
+    const liveTail = needsEncode(channel, '') ? encodedTail(channel, 'copy', '') : null;
+    if (liveTail) liveArgs.push(...liveTail);
     else if (channel.mode === 'transcode') liveArgs.push(...transcodeArgs(channel));
     else liveArgs.push('-c', 'copy');
     liveArgs.push(...outputArgs(channel.key));
     return liveArgs;
   }
 
+  const block = currentBlock(channel);
+  const rating = activeRating(channel, block);
   const listPath = buildConcatFile(channel, entry);
   if (!listPath) return null;
   const args = [
@@ -305,10 +356,11 @@ function buildChannelArgs(channel, entry) {
     '-f', 'concat', '-safe', '0',
     '-i', listPath
   ];
-  if (logoEnabled(channel)) {
-    // Overlay de logo: re-encoda o vídeo, copia o áudio quando a fonte é AAC
-    // em TS (normalized) ou outro -c copy compatível.
-    args.push(...applyLogoArgs(channel, channel.mode === 'normalized'));
+  if (needsEncode(channel, rating)) {
+    // Overlay (logo/classificação) ou transcode: re-encoda o vídeo. O áudio
+    // segue em cópia (com bsf para o AAC em TS do modo normalized).
+    const audioMode = channel.mode === 'normalized' ? 'copy-ts' : (channel.mode === 'copy' ? 'copy' : 'encode');
+    args.push(...encodedTail(channel, audioMode, rating));
   } else if (channel.mode === 'normalized') {
     // Arquivos pré-normalizados (MPEG-TS uniforme): cópia direta, CPU ~zero.
     // O bsf converte o AAC de ADTS (TS) para o formato esperado pelo FLV.

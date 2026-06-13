@@ -26,6 +26,7 @@ router.post('/', async (req, res) => {
     id: db.id(),
     name: String(name).trim(),
     videoIds: [],
+    rating: '',   // classificação indicativa (''=sem; L,10,12,14,16,18)
     createdAt: new Date().toISOString()
   };
   state.playlists.push(playlist);
@@ -43,6 +44,9 @@ router.patch('/:id', async (req, res) => {
   if (Array.isArray(b.videoIds)) {
     const valid = new Set(state.videos.map((v) => v.id));
     playlist.videoIds = b.videoIds.filter((id) => valid.has(id));
+  }
+  if (typeof b.rating === 'string' && ['', 'L', '10', '12', '14', '16', '18'].includes(b.rating)) {
+    playlist.rating = b.rating;
   }
   await db.save();
   // Canais no ar usando esta playlist recarregam o conteúdo

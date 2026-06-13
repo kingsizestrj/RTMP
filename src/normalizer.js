@@ -17,6 +17,13 @@ function normalizedPath(video) {
   return path.join(config.NORMALIZED_DIR, `${video.id}.ts`);
 }
 
+// Filtro de áudio: ressample + (opcional) normalização de loudness EBU R128,
+// para padronizar o volume entre programas e comerciais.
+function audioFilter() {
+  const base = 'aresample=async=1:first_pts=0';
+  return config.NORMALIZE_LOUDNORM ? `loudnorm=${config.NORMALIZE_LOUDNORM_TARGET},${base}` : base;
+}
+
 function buildArgs(inputPath, outputPath) {
   const res = config.NORMALIZE_RESOLUTION;
   const [w, h] = res.split('x').map(Number);
@@ -34,7 +41,7 @@ function buildArgs(inputPath, outputPath) {
     '-b:v', vb, '-maxrate', vb, '-bufsize', bufsize,
     '-g', String(fps * 2), '-sc_threshold', '0',
     '-pix_fmt', 'yuv420p',
-    '-af', 'aresample=async=1:first_pts=0',
+    '-af', audioFilter(),
     '-c:a', 'aac', '-b:a', ab, '-ar', '44100', '-ac', '2'
   ];
   if (config.NORMALIZE_THREADS) args.push('-threads', config.NORMALIZE_THREADS);
@@ -105,7 +112,9 @@ function conformance(info) {
     a.codec_name === 'aac' &&
     parseInt(a.sample_rate, 10) === 44100 &&
     a.channels === 2;
-  return audioOk ? 'remux' : 'audio';
+  // Loudness exige re-encodar o áudio — não dá para só reempacotar.
+  if (audioOk && !config.NORMALIZE_LOUDNORM) return 'remux';
+  return 'audio';
 }
 
 function argsForMethod(method, inputPath, outputPath) {
@@ -122,7 +131,7 @@ function argsForMethod(method, inputPath, outputPath) {
       '-hide_banner', '-loglevel', 'error', '-y',
       '-i', inputPath,
       '-c:v', 'copy',
-      '-af', 'aresample=async=1:first_pts=0',
+      '-af', audioFilter(),
       '-c:a', 'aac', '-b:a', config.NORMALIZE_AUDIO_BITRATE, '-ar', '44100', '-ac', '2',
       '-f', 'mpegts', outputPath
     ];

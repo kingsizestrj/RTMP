@@ -87,6 +87,13 @@ module.exports = {
   // Detecção inteligente: vídeos enviados já no padrão do perfil são apenas
   // reempacotados (segundos, sem re-encode nem perda). false = sempre re-encodar.
   NORMALIZE_SMART: process.env.NORMALIZE_SMART !== 'false',
+  // Normalização de loudness (EBU R128): padroniza o volume entre programas e
+  // comerciais (o clássico "comercial mais alto"). Re-encoda só o áudio.
+  NORMALIZE_LOUDNORM: process.env.NORMALIZE_LOUDNORM !== 'false',
+  NORMALIZE_LOUDNORM_TARGET: process.env.NORMALIZE_LOUDNORM_TARGET || 'I=-16:TP=-1.5:LRA=11',
+
+  // Fonte para textos sobrepostos (classificação indicativa, cartão de espera)
+  FONT_PATH: process.env.FONT_PATH || '',
 
   // Limite de upload por arquivo (em MB)
   MAX_UPLOAD_MB: parseInt(process.env.MAX_UPLOAD_MB || '4096', 10),

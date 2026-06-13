@@ -5,6 +5,8 @@ Servidor RTMP com painel de gerência web. Permite:
 - **🎬 Acervo de vídeos** — upload de vídeos pelo painel (drag & drop, multi-arquivo, barra de progresso) e divisor de episódios (✂️ corta um arquivo grande em partes, sem re-encode)
 - **🎞 Playlists** — listas ordenadas reutilizáveis, com indicação de onde são usadas
 - **📺 Canais (emissora 24/7)** — playlist padrão em loop + **grade de programação visual** (grade de 30 min × 7 dias, pintável; blocos podem virar a meia-noite), **transição suave** (espera o programa atual terminar antes de trocar de bloco), **vinhetas/comerciais** por contagem ou por minutos, **logo/marca d'água** e **"agora exibindo / a seguir"** em tempo real
+- **🔊 Loudness EBU R128** — o volume é padronizado no upload (-16 LUFS), acabando com o "comercial mais alto que o desenho"
+- **🔞 Classificação indicativa** — cada playlist (programa) tem uma classificação; o selo oficial (L/10/12/14/16/18) aparece no canto quando ela está no ar
 - **📅 Guia de programação (EPG)** — página pública `/guia.html` com o que está no ar agora, o que vem a seguir e a grade do dia de cada canal
 - **🎥 Live com fallback** — vincule uma entrada ao vivo (OBS) ou um relay ao canal: quando publicar, o canal corta para a live; quando cair, volta para a playlist sozinho
 - **🔁 Relays** — informe um link HTTP/HLS/RTMP/RTSP/SRT/UDP e ele é retransmitido como um novo link RTMP (com opção de loop para VOD)
@@ -136,6 +138,9 @@ ffmpeg -i entrada.mp4 \
 | `NORMALIZE_THREADS` | *(auto)* | Limita threads da normalização |
 | `NORMALIZE_CONCURRENCY` | `1` | Vídeos normalizados em paralelo |
 | `NORMALIZE_SMART` | `true` | Pula o re-encode de vídeos enviados já no padrão (só remux) |
+| `NORMALIZE_LOUDNORM` | `true` | Normaliza loudness (EBU R128) no upload — volume uniforme entre programas |
+| `NORMALIZE_LOUDNORM_TARGET` | `I=-16:TP=-1.5:LRA=11` | Alvo do loudnorm (LUFS) |
+| `FONT_PATH` | *(autodetecta)* | Fonte para textos sobrepostos (classificação indicativa) |
 
 ## Baixa latência nas lives (sem "gol do vizinho antes")
 

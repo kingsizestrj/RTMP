@@ -494,6 +494,7 @@ async function loadPlaylists() {
         return `<div class="item">
           <div class="item-head">
             <span class="item-title">🎞 ${esc(p.name)}</span>
+            ${p.rating ? `<span class="rating-badge r${esc(p.rating)}">${esc(p.rating)}</span>` : ''}
             <span class="muted">${ids.length} vídeo(s) · ${fmtDuration(total)}${users.length ? ` · usada por: ${esc(users.map((c) => c.name).join(', '))}` : ''}</span>
             <div class="item-actions">
               <button class="btn small" data-edit-playlist="${p.id}">⚙️ Editar</button>
@@ -521,9 +522,17 @@ async function editPlaylist(id) {
   const byId = new Map(videos.map((v) => [v.id, v]));
   const order = (p.videoIds || []).filter((vid) => byId.has(vid));
 
+  const RATINGS = [['', 'Sem classificação'], ['L', 'Livre'], ['10', '10 anos'], ['12', '12 anos'], ['14', '14 anos'], ['16', '16 anos'], ['18', '18 anos']];
   openModal(`
     <h3>🎞 Editar playlist</h3>
     <div class="form-row"><label>Nome</label><input type="text" id="pl-name" value="${esc(p.name)}"></div>
+    <div class="form-row">
+      <label>🔞 Classificação indicativa — selo exibido no canto quando este programa está no ar</label>
+      <select id="pl-rating">
+        ${RATINGS.map(([v, l]) => `<option value="${v}" ${(p.rating || '') === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>
+      <p class="muted">Exibir o selo re-encoda o vídeo nos canais que usam esta playlist (custa CPU, sai da cópia direta).</p>
+    </div>
     <div class="form-row">
       <label>Vídeos (ordem de reprodução)</label>
       <div id="pl-order">${orderedPickerHtml(order, byId)}</div>
@@ -541,7 +550,7 @@ async function editPlaylist(id) {
   $('#modal-cancel').addEventListener('click', closeModal);
   $('#pl-save').addEventListener('click', async () => {
     try {
-      await api(`/playlists/${id}`, { method: 'PATCH', body: { name: $('#pl-name').value, videoIds: order } });
+      await api(`/playlists/${id}`, { method: 'PATCH', body: { name: $('#pl-name').value, videoIds: order, rating: $('#pl-rating').value } });
       closeModal();
       toast('Playlist salva!');
       loadPlaylists();

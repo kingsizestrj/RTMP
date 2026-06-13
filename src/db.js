@@ -42,6 +42,10 @@ function migrate(s) {
     if (typeof c.logo !== 'boolean') { c.logo = false; changed = true; }
     if (typeof c.logoPosition !== 'string') { c.logoPosition = 'tr'; changed = true; }
   }
+  for (const p of s.playlists) {
+    // Classificação indicativa do programa (''=sem; L,10,12,14,16,18)
+    if (typeof p.rating !== 'string') { p.rating = ''; changed = true; }
+  }
   return changed;
 }
 
