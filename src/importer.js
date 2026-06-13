@@ -20,6 +20,7 @@ let active = 0;
 function baseArgs() {
   const a = ['--no-warnings', '--socket-timeout', '30'];
   if (config.YTDLP_COOKIES) a.push('--cookies', config.YTDLP_COOKIES);
+  a.push(...config.YTDLP_EXTRA_ARGS);
   return a;
 }
 

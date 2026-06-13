@@ -47,6 +47,10 @@ module.exports = {
   // Arquivo de cookies (formato Netscape) para o yt-dlp — necessário quando o
   // YouTube bloqueia o IP do servidor (comum em VPS/datacenter)
   YTDLP_COOKIES: process.env.YTDLP_COOKIES || '',
+  // Argumentos extras aplicados a TODA chamada do yt-dlp (import + relays).
+  // Válvula de escape para contornar bloqueios sem mexer no código, ex.:
+  //   YTDLP_EXTRA_ARGS=--extractor-args youtube:player_client=android,web
+  YTDLP_EXTRA_ARGS: (process.env.YTDLP_EXTRA_ARGS || '').split(/\s+/).filter(Boolean),
 
   // Cache local dos vídeos baixados do YouTube (VOD é baixado uma única vez)
   CACHE_DIR: process.env.CACHE_DIR || path.join(ROOT, 'media', 'cache'),

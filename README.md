@@ -82,7 +82,7 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
    - **Lives**: o yt-dlp baixa a transmissão e alimenta o FFmpeg em tempo real; se a live cair, o relay fica tentando reconectar sozinho.
    - **Vídeos**: são baixados **uma única vez** para o cache local (`media/cache/`, na melhor qualidade H.264 até 1080p) e transmitidos de lá — sem links expirando nem re-downloads a cada loop. O status mostra "BAIXANDO" durante o download. O cache é apagado quando o relay é excluído.
    - **Retransmita apenas conteúdo que você tem direito de redistribuir.**
-   - Se o YouTube bloquear o IP do servidor (erro 403 ou "Sign in to confirm you're not a bot" — comum em VPS/datacenter), exporte os cookies do seu navegador (extensão "Get cookies.txt"), salve em `./data/cookies.txt` e defina `YTDLP_COOKIES=/app/data/cookies.txt` no `.env`.
+   - Se o YouTube bloquear o IP do servidor (erro 403, "Sign in to confirm you're not a bot" ou "This video is not available" — comum em VPS/datacenter), exporte os cookies do seu navegador (extensão "Get cookies.txt"), salve em `./data/cookies.txt` e defina `YTDLP_COOKIES=/app/data/cookies.txt` no `.env`. Mantenha o yt-dlp atualizado (rebuild da imagem) — os extratores do YouTube mudam com frequência. Para casos difíceis, `YTDLP_EXTRA_ARGS` permite trocar o cliente de extração (ex.: `--extractor-args youtube:player_client=android,web`). Obs.: relay de live e download de vídeo são caminhos diferentes no YouTube — a live funcionar não garante que o download funcione.
 7. Para **transmitir ao vivo do OBS**, crie uma *Entrada*, configure o OBS com o servidor `rtmp://SEU_IP:1935/live` e a chave gerada.
 8. Para **veicular comerciais**, vá em *Comerciais → Nova campanha*: escolha o vídeo, a janela de datas e os canais. O anúncio entra nos intervalos (junto das vinhetas) enquanto a campanha estiver ativa. O botão *As-run / relatório* mostra o que foi ao ar e quantas vezes cada comercial foi inserido (com download do log completo).
 
@@ -130,6 +130,7 @@ ffmpeg -i entrada.mp4 \
 | `YTDLP_FORMAT` | *(H.264+AAC ≤1080p)* | Seletor de formato do yt-dlp (VOD) |
 | `YTDLP_LIVE_FORMAT` | `b` | Seletor de formato para lives |
 | `YTDLP_COOKIES` | *(vazio)* | Arquivo de cookies para IPs bloqueados pelo YouTube |
+| `YTDLP_EXTRA_ARGS` | *(vazio)* | Args extras do yt-dlp (import + relays), ex.: `--extractor-args youtube:player_client=android,web` |
 | `CACHE_DIR` | `media/cache` | Cache dos vídeos baixados do YouTube |
 | `MAX_UPLOAD_MB` | `4096` | Tamanho máximo por arquivo de upload |
 | `ALLOW_ANY_PUBLISH` | `false` | Aceitar publicação RTMP com qualquer chave |
