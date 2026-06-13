@@ -326,8 +326,26 @@ function normBadge(v) {
   return `<span class="badge ${m[0]}"${tip}>${m[1]}${n.method === 'remux' ? ' ⚡' : ''}</span>`;
 }
 
+function renderImports(imports) {
+  const active = imports.filter((j) => j.status === 'queued' || j.status === 'downloading' || j.status === 'processing');
+  const recent = imports.filter((j) => j.status === 'done' || j.status === 'error').slice(0, 5);
+  const show = [...active, ...recent];
+  const box = $('#import-list');
+  if (!box) return;
+  if (show.length === 0) { box.innerHTML = ''; return; }
+  const icon = { queued: '⏳', downloading: '⬇️', processing: '⚙️', done: '✅', error: '❌' };
+  box.innerHTML = '<div class="muted" style="margin:8px 0 4px">Importações do YouTube</div>' + show.map((j) => `
+    <div class="item" style="padding:10px 14px">
+      <div class="item-head">
+        <span>${icon[j.status] || ''} <b>${esc(j.title)}</b></span>
+        <span class="muted">${esc(j.message || j.status)}${j.status === 'downloading' && j.progress ? ` ${Math.round(j.progress)}%` : ''}</span>
+      </div>
+    </div>`).join('');
+}
+
 async function loadVideos() {
-  const videos = await api('/videos');
+  const [videos, imports] = await Promise.all([api('/videos'), api('/videos/imports').catch(() => [])]);
+  renderImports(imports);
   $('#video-list').innerHTML = videos.length === 0
     ? '<p class="muted">Nenhum vídeo enviado ainda.</p>'
     : videos.map((v) => `
@@ -382,6 +400,31 @@ function uploadFiles(files) {
 }
 
 $('#upload-input').addEventListener('change', (e) => { uploadFiles(e.target.files); e.target.value = ''; });
+
+$('#yt-btn').addEventListener('click', () => {
+  openModal(`
+    <h3>⬇️ Baixar do YouTube</h3>
+    <div class="form-row"><label>URL do vídeo ou da playlist</label>
+      <input type="text" id="yt-url" placeholder="https://www.youtube.com/watch?v=..."></div>
+    <div class="form-row checkbox-row"><input type="checkbox" id="yt-chapters"><label for="yt-chapters">✂️ Dividir em episódios pelos capítulos do vídeo (quando houver)</label></div>
+    <div class="form-row checkbox-row"><input type="checkbox" id="yt-playlist"><label for="yt-playlist">📃 Baixar a playlist inteira (um vídeo de cada vez)</label></div>
+    <p class="muted">Os vídeos baixados entram na normalização automaticamente. Baixe apenas conteúdo que você tem direito de usar.</p>
+    <div class="modal-actions">
+      <button class="btn" id="modal-cancel">Cancelar</button>
+      <button class="btn primary" id="yt-go">Baixar</button>
+    </div>`);
+  $('#modal-cancel').addEventListener('click', closeModal);
+  $('#yt-go').addEventListener('click', async () => {
+    const url = $('#yt-url').value.trim();
+    if (!url) return toast('Cole a URL', true);
+    try {
+      await api('/videos/import', { method: 'POST', body: { url, splitChapters: $('#yt-chapters').checked, playlist: $('#yt-playlist').checked } });
+      closeModal();
+      toast('Importação iniciada — acompanhe acima da lista de vídeos.');
+      loadVideos();
+    } catch (err) { toast(err.message, true); }
+  });
+});
 
 $('#slate-btn').addEventListener('click', async () => {
   const text = prompt('Texto do cartão de espera:', 'JÁ VOLTAMOS');

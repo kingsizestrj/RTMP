@@ -7,6 +7,7 @@ const { execFile, spawn } = require('child_process');
 const config = require('../config');
 const db = require('../db');
 const normalizer = require('../normalizer');
+const importer = require('../importer');
 
 const router = express.Router();
 
@@ -48,6 +49,21 @@ function probeDuration(filePath) {
 
 router.get('/', (req, res) => {
   res.json(db.get().videos);
+});
+
+// Importar do YouTube (vídeo ou playlist), opcionalmente cortando por capítulos.
+router.post('/import', (req, res) => {
+  const { url, splitChapters, playlist } = req.body || {};
+  try {
+    const job = importer.enqueue({ url, splitChapters: !!splitChapters, playlist: !!playlist });
+    res.json({ ok: true, job });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/imports', (req, res) => {
+  res.json(importer.list());
 });
 
 router.post('/upload', upload.array('videos', 20), async (req, res) => {

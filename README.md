@@ -3,6 +3,7 @@
 Servidor RTMP com painel de gerência web. Permite:
 
 - **🎬 Acervo de vídeos** — upload de vídeos pelo painel (drag & drop, multi-arquivo, barra de progresso) e divisor de episódios (✂️ corta um arquivo grande em partes, sem re-encode)
+- **⬇️ Baixar do YouTube** — importe um vídeo ou uma playlist inteira para o acervo; opção de **dividir em episódios pelos capítulos** do vídeo (ideal para compilações de desenhos). Os arquivos baixados entram na normalização automaticamente
 - **🎞 Playlists** — listas ordenadas reutilizáveis, com indicação de onde são usadas
 - **📺 Canais (emissora 24/7)** — playlist padrão em loop + **grade de programação visual** (grade de 30 min × 7 dias, pintável; blocos podem virar a meia-noite), **transição suave** (espera o programa atual terminar antes de trocar de bloco), **✨ transição sem corte** opcional (modo emissora — encadeia os blocos num fluxo contínuo, sem o corte de ~2s na virada), **vinhetas/comerciais** por contagem ou por minutos, **logo/marca d'água** e **"agora exibindo / a seguir"** em tempo real
 - **🔊 Loudness EBU R128** — o volume é padronizado no upload (-16 LUFS), acabando com o "comercial mais alto que o desenho"
@@ -64,6 +65,7 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
 ## Como usar
 
 1. **Suba vídeos** na aba *Vídeos* (arraste arquivos ou clique em Enviar). Para um arquivo com vários episódios, use o **✂️ divisor**: marque os cortes no player e cada parte vira um vídeo do acervo (sem re-encode, cortes ajustados ao keyframe).
+   - Ou **⬇️ Baixe do YouTube**: cole a URL de um vídeo ou playlist; marque *dividir por capítulos* para que cada capítulo do vídeo vire um episódio separado no acervo. Requer `yt-dlp` (já incluso na imagem Docker). Baixe apenas conteúdo que você tem direito de usar.
 2. **Monte playlists** na aba *Playlists* (listas ordenadas, reutilizáveis).
 3. **Crie um canal** na aba *Canais*, escolha a **playlist padrão** e clique em **Iniciar**. Opcionalmente configure:
    - **📅 Grade de programação visual**: escolha uma playlist na paleta e **pinte os horários** na grade (30 min × 7 dias, clicando e arrastando; a borracha limpa). Fora dos blocos pintados, vale a playlist padrão. Blocos podem **virar a meia-noite** (ex.: 23:00→02:00 para o corujão). O horário é o do servidor — defina `TZ` (ex.: `America/Sao_Paulo`) no `.env`/compose.
