@@ -212,6 +212,14 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 
 .error-msg { color: var(--red); font-size: 13px; text-align: center; min-height: 16px; }
 
+/* As-run / relatório */
+.asrun-rep { width: 100%; border-collapse: collapse; font-size: 13px; }
+.asrun-rep th, .asrun-rep td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.asrun-rep th { color: var(--muted); font-weight: 600; }
+.asrun-line { font-family: monospace; font-size: 12px; padding: 2px 0; color: #9ba8b5; }
+.asrun-line .t { color: var(--accent); }
+.modal h4 { font-size: 14px; }
+
 /* Selo de classificação indicativa */
 .rating-badge {
   display: inline-flex; align-items: center; justify-content: center;

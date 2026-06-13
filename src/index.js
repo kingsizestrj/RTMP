@@ -30,7 +30,23 @@ app.use('/api/playlists', auth.requireAuth, require('./routes/playlists'));
 app.use('/api/channels', auth.requireAuth, require('./routes/channels'));
 app.use('/api/relays', auth.requireAuth, require('./routes/relays'));
 app.use('/api/inputs', auth.requireAuth, require('./routes/inputs'));
+app.use('/api/campaigns', auth.requireAuth, require('./routes/campaigns'));
 app.use('/api/settings', auth.requireAuth, require('./routes/settings'));
+
+// As-run log (o que foi ao ar) + relatório de veiculação de comerciais
+const asrun = require('./asrun');
+app.get('/api/asrun', auth.requireAuth, (req, res) => {
+  const n = Math.min(2000, parseInt(req.query.n, 10) || 300);
+  res.json(asrun.tail(n, req.query.channelId || null));
+});
+app.get('/api/asrun/report', auth.requireAuth, (req, res) => {
+  const days = Math.min(365, parseInt(req.query.days, 10) || 7);
+  res.json(asrun.adReport(days));
+});
+app.get('/api/asrun/download', auth.requireAuth, (req, res) => {
+  res.type('text/plain');
+  require('fs').createReadStream(asrun.FILE).on('error', () => res.end('')).pipe(res);
+});
 
 // Config pública mínima para as páginas de player/guia (portas e host).
 app.get('/api/public/config', (req, res) => {

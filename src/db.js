@@ -13,6 +13,7 @@ const DEFAULTS = {
   channels: [],  // { id, name, key, defaultPlaylistId, schedule[], breakVideoIds, breakEvery, liveInputId, shuffle, mode, ... }
   relays: [],    // { id, name, key, sourceUrl, ytdlp, mode, loop, autostart }
   inputs: [],    // { id, name, key, createdAt }  -> entradas ao vivo (OBS etc.)
+  campaigns: [], // { id, name, videoId, start, end, channelIds[], enabled } -> comerciais
   settings: {}
 };
 

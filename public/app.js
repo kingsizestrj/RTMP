@@ -259,7 +259,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
 function refreshCurrentTab() {
   const map = {
     dashboard: loadDashboard, videos: loadVideos, playlists: loadPlaylists,
-    channels: loadChannels, relays: loadRelays, inputs: loadInputs
+    channels: loadChannels, relays: loadRelays, inputs: loadInputs, campaigns: loadCampaigns
   };
   (map[currentTab] || (() => {}))().catch(() => {});
 }
@@ -1027,6 +1027,116 @@ $('#new-input-btn').addEventListener('click', async () => {
   } catch (err) { toast(err.message, true); }
 });
 
+/* ---------- comerciais (campanhas) + as-run ---------- */
+
+function campaignActive(c) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!c.enabled) return false;
+  if (c.start && today < c.start) return false;
+  if (c.end && today > c.end) return false;
+  return true;
+}
+
+async function loadCampaigns() {
+  const [campaigns, videos, channels] = await Promise.all([api('/campaigns'), api('/videos'), api('/channels')]);
+  const vById = new Map(videos.map((v) => [v.id, v]));
+  const cById = new Map(channels.map((c) => [c.id, c]));
+  $('#campaign-list').innerHTML = campaigns.length === 0
+    ? '<p class="muted">Nenhuma campanha. Crie uma para veicular um comercial nos intervalos.</p>'
+    : campaigns.map((c) => {
+        const v = vById.get(c.videoId);
+        const alvo = (c.channelIds || []).length ? c.channelIds.map((id) => (cById.get(id) || {}).name || '?').join(', ') : 'todos os canais';
+        const periodo = (c.start || c.end) ? `${c.start || '...'} → ${c.end || '...'}` : 'sem data limite';
+        const ativa = campaignActive(c);
+        return `<div class="item">
+          <div class="item-head">
+            <span class="item-title">📢 ${esc(c.name)}</span>
+            <span class="badge ${ativa ? 'running' : 'stopped'}">${ativa ? 'NO AR' : (c.enabled ? 'FORA DA JANELA' : 'DESATIVADA')}</span>
+            <div class="item-actions">
+              <button class="btn small" data-edit-campaign="${c.id}">⚙️ Editar</button>
+              <button class="btn small danger" data-del-campaign="${c.id}">🗑️</button>
+            </div>
+          </div>
+          <div class="item-sub">🎬 ${esc(v ? v.name : '(vídeo removido)')} · 🗓 ${esc(periodo)} · 🎯 ${esc(alvo)}</div>
+        </div>`;
+      }).join('');
+}
+
+function campaignForm(c, videos, channels) {
+  return `
+    <div class="form-row"><label>Nome da campanha</label><input type="text" id="cp-name" value="${esc(c.name || '')}" placeholder="Ex.: Refrigerante XPTO"></div>
+    <div class="form-row"><label>Vídeo do comercial</label>
+      <select id="cp-video">${videos.map((v) => `<option value="${v.id}" ${c.videoId === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('') || '<option value="">(envie um vídeo primeiro)</option>'}</select>
+    </div>
+    <div class="form-grid">
+      <div class="form-row"><label>Início (vazio = já)</label><input type="date" id="cp-start" value="${esc(c.start || '')}"></div>
+      <div class="form-row"><label>Fim (vazio = sem limite)</label><input type="date" id="cp-end" value="${esc(c.end || '')}"></div>
+    </div>
+    <div class="form-row">
+      <label>Canais (nenhum marcado = todos)</label>
+      <div class="playlist-pick" style="max-height:120px">
+        ${channels.map((ch) => `<label><input type="checkbox" data-cp-ch="${ch.id}" ${(c.channelIds || []).includes(ch.id) ? 'checked' : ''}> ${esc(ch.name)}</label>`).join('') || '<p class="muted">Sem canais.</p>'}
+      </div>
+    </div>
+    <div class="form-row checkbox-row"><input type="checkbox" id="cp-enabled" ${c.enabled !== false ? 'checked' : ''}><label for="cp-enabled">Ativa</label></div>`;
+}
+
+function readCampaignForm() {
+  return {
+    name: $('#cp-name').value,
+    videoId: $('#cp-video').value,
+    start: $('#cp-start').value,
+    end: $('#cp-end').value,
+    channelIds: [...$('#modal').querySelectorAll('[data-cp-ch]:checked')].map((el) => el.dataset.cpCh),
+    enabled: $('#cp-enabled').checked
+  };
+}
+
+async function openCampaign(id) {
+  const [campaigns, videos, channels] = await Promise.all([api('/campaigns'), api('/videos'), api('/channels')]);
+  const c = id ? campaigns.find((x) => x.id === id) : {};
+  if (id && !c) return;
+  openModal(`<h3>${id ? '⚙️ Editar' : '➕ Nova'} campanha</h3>${campaignForm(c, videos, channels)}
+    <div class="modal-actions">
+      <button class="btn" id="modal-cancel">Cancelar</button>
+      <button class="btn primary" id="cp-save">Salvar</button>
+    </div>`);
+  $('#modal-cancel').addEventListener('click', closeModal);
+  $('#cp-save').addEventListener('click', async () => {
+    const body = readCampaignForm();
+    if (!body.name.trim()) return toast('Informe o nome', true);
+    if (!body.videoId) return toast('Selecione o vídeo do comercial', true);
+    try {
+      if (id) await api(`/campaigns/${id}`, { method: 'PATCH', body });
+      else await api('/campaigns', { method: 'POST', body });
+      closeModal(); toast('Campanha salva!'); loadCampaigns();
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
+$('#new-campaign-btn').addEventListener('click', () => openCampaign(null));
+
+$('#asrun-btn').addEventListener('click', async () => {
+  let log = [], report = [];
+  try { [log, report] = await Promise.all([api('/asrun?n=200'), api('/asrun/report?days=7')]); } catch (err) { return toast(err.message, true); }
+  const repHtml = report.length
+    ? `<table class="asrun-rep"><tr><th>Comercial</th><th>Inserções (7d)</th><th>Última</th></tr>${report.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.count}</td><td>${esc(r.last.replace('T', ' ').slice(0, 19))}</td></tr>`).join('')}</table>`
+    : '<p class="muted">Nenhuma veiculação de comercial nos últimos 7 dias.</p>';
+  const TYPE = { program: '🎬', ad: '📢', break: '📺', live: '🔴', offair: '⏹' };
+  const logHtml = log.length
+    ? log.map((e) => `<div class="asrun-line"><span class="t">${esc(e.t.replace('T', ' ').slice(0, 19))}</span> ${TYPE[e.type] || ''} <b>${esc(e.channel)}</b> — ${esc(e.title)}</div>`).join('')
+    : '<p class="muted">As-run vazio ainda.</p>';
+  openModal(`<h3>📜 As-run & relatório de veiculação</h3>
+    <h4 style="margin:6px 0">Comerciais (últimos 7 dias)</h4>${repHtml}
+    <h4 style="margin:14px 0 6px">Registro do que foi ao ar</h4>
+    <div class="logs">${logHtml}</div>
+    <div class="modal-actions">
+      <a class="btn" href="/api/asrun/download" target="_blank">⬇️ Baixar as-run completo</a>
+      <button class="btn" id="modal-cancel">Fechar</button>
+    </div>`);
+  $('#modal-cancel').addEventListener('click', closeModal);
+});
+
 /* ---------- logs e preview ---------- */
 
 async function showLogs(type, id) {
@@ -1114,7 +1224,7 @@ function showPreview(key) {
 /* ---------- delegação de cliques ---------- */
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-edit-playlist],[data-del-playlist],[data-regen-input],[data-del-input]');
+  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-edit-playlist],[data-del-playlist],[data-edit-campaign],[data-del-campaign],[data-regen-input],[data-del-input]');
   if (!t) return;
   const d = t.dataset;
   // Evita clique duplo disparar a mesma ação duas vezes (ex.: dois starts)
@@ -1172,6 +1282,13 @@ document.addEventListener('click', async (e) => {
       if (confirm('Excluir esta playlist?')) {
         await api(`/playlists/${d.delPlaylist}`, { method: 'DELETE' });
         toast('Playlist excluída.'); loadPlaylists();
+      }
+    }
+    else if (d.editCampaign) openCampaign(d.editCampaign);
+    else if (d.delCampaign) {
+      if (confirm('Excluir esta campanha?')) {
+        await api(`/campaigns/${d.delCampaign}`, { method: 'DELETE' });
+        toast('Campanha excluída.'); loadCampaigns();
       }
     }
     else if (d.regenInput) {

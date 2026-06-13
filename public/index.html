@@ -29,6 +29,7 @@
         <button class="tab-btn" data-tab="channels">Canais</button>
         <button class="tab-btn" data-tab="relays">Relays</button>
         <button class="tab-btn" data-tab="inputs">Entradas ao vivo</button>
+        <button class="tab-btn" data-tab="campaigns">Comerciais</button>
       </nav>
       <a href="guia.html" target="_blank" class="btn small" title="Guia de programação público">📺 Guia</a>
       <button id="logout-btn" class="btn small">Sair</button>
@@ -98,6 +99,19 @@
         </div>
         <p class="muted">Crie uma chave, configure seu OBS para publicar nela e distribua o link de reprodução gerado.</p>
         <div id="input-list" class="list"></div>
+      </section>
+
+      <!-- COMERCIAIS -->
+      <section id="tab-campaigns" class="tab hidden">
+        <div class="toolbar">
+          <h2>Comerciais (campanhas)</h2>
+          <div style="display:flex; gap:8px">
+            <button id="asrun-btn" class="btn">📜 As-run / relatório</button>
+            <button id="new-campaign-btn" class="btn primary">➕ Nova campanha</button>
+          </div>
+        </div>
+        <p class="muted">Um comercial é um vídeo veiculado nos intervalos dos canais durante uma janela de datas. Cada inserção fica registrada no as-run.</p>
+        <div id="campaign-list" class="list"></div>
       </section>
     </main>
   </div>

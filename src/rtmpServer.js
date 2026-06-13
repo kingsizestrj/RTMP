@@ -72,6 +72,12 @@ function start() {
       }]
     };
   }
+  // Contorna um bug do node-media-server v2.7.4: o trans server (HLS) loga
+  // `ffmpeg version: ${version}` com `version` não declarado, lançando
+  // ReferenceError no boot. Definir global.version faz o identificador
+  // resolver e o log sair sem quebrar (o HLS em si funciona).
+  if (typeof global.version === 'undefined') global.version = '';
+
   nms = new NodeMediaServer(conf);
 
   nms.on('prePublish', (id, streamPath, args) => {

@@ -3,6 +3,7 @@
 const express = require('express');
 const db = require('../db');
 const sm = require('../streamManager');
+const asrun = require('../asrun');
 
 const router = express.Router();
 
@@ -158,6 +159,7 @@ router.post('/:id/stop', (req, res) => {
   const channel = db.get().channels.find((c) => c.id === req.params.id);
   if (!channel) return res.status(404).json({ error: 'Canal não encontrado' });
   sm.stop(channel.id);
+  asrun.record({ channelId: channel.id, channel: channel.name, type: 'offair', title: '(canal parado)' });
   res.json({ ok: true });
 });
 

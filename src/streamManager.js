@@ -10,6 +10,7 @@ const path = require('path');
 const config = require('./config');
 const db = require('./db');
 const rtmpServer = require('./rtmpServer');
+const asrun = require('./asrun');
 
 const LOG_LINES = 60;
 const MAX_BACKOFF_MS = 30000;
@@ -111,54 +112,80 @@ function selectEntries(channel, ids) {
   return entries;
 }
 
+// Comerciais ativos para o canal agora: campanhas habilitadas, dentro da
+// janela de datas, direcionadas a este canal (lista vazia = todos), com o
+// vídeo pronto. Devolve itens {v, kind:'ad', campaignId, name}.
+function activeAds(channel) {
+  const state = db.get();
+  const today = new Date().toISOString().slice(0, 10);
+  const byId = new Map(state.videos.map((v) => [v.id, v]));
+  const out = [];
+  for (const c of state.campaigns || []) {
+    if (!c.enabled) continue;
+    if (c.start && today < c.start) continue;
+    if (c.end && today > c.end) continue;
+    if (Array.isArray(c.channelIds) && c.channelIds.length && !c.channelIds.includes(channel.id)) continue;
+    const v = byId.get(c.videoId);
+    if (!v) continue;
+    if (channel.mode === 'normalized' && !(v.normalized && v.normalized.status === 'ready')) continue;
+    out.push({ v, kind: 'ad', campaignId: c.id, name: c.name });
+  }
+  return out;
+}
+
+function wrapProgram(v) { return { v, kind: 'program', name: v.name }; }
+
 // Gera o arquivo de concat do ffmpeg: playlist do bloco da grade ativo (ou a
-// padrão), com embaralhamento opcional e vinhetas intercaladas a cada N
-// vídeos. Registra no entry a ordem de reprodução (para o "agora exibindo")
-// e a assinatura da fonte (para o agendador detectar trocas de bloco).
+// padrão), com embaralhamento opcional e, nos intervalos, comerciais ativos +
+// vinhetas — por contagem (a cada N vídeos) ou por tempo (a cada N minutos).
+// Registra no entry a ordem de reprodução (com o tipo de cada item, para o
+// "agora exibindo" e o as-run) e a assinatura da fonte.
 function buildConcatFile(channel, entry) {
   const block = currentBlock(channel);
   let source = block ? `block:${block.id}` : 'default';
-  let entries = selectEntries(channel, playlistIds(block ? block.playlistId : channel.defaultPlaylistId));
-  if (block && entries.length === 0) {
-    // Bloco sem vídeos utilizáveis: cai para a playlist padrão
-    entries = selectEntries(channel, playlistIds(channel.defaultPlaylistId));
+  let content = selectEntries(channel, playlistIds(block ? block.playlistId : channel.defaultPlaylistId));
+  if (block && content.length === 0) {
+    content = selectEntries(channel, playlistIds(channel.defaultPlaylistId));
     source = `fallback:${block.id}`;
   }
-  if (channel.shuffle) entries = shuffleArray(entries);
+  if (channel.shuffle) content = shuffleArray(content);
 
-  // Vinhetas/comerciais intercaladas: por contagem (a cada N vídeos) ou por
-  // tempo (a cada N minutos de conteúdo acumulado).
-  const breaks = selectEntries(channel, channel.breakVideoIds || []);
-  if (breaks.length > 0 && entries.length > 0) {
-    const dur = (v) => v.durationSec || v.duration || 0;
+  let items = content.map(wrapProgram);
+
+  // Bloco de intervalo = comerciais ativos + vinhetas fixas do canal
+  const breakItems = [
+    ...activeAds(channel),
+    ...selectEntries(channel, channel.breakVideoIds || []).map((v) => ({ v, kind: 'break', name: v.name }))
+  ];
+  if (breakItems.length > 0 && items.length > 0) {
+    const dur = (it) => it.v.durationSec || it.v.duration || 0;
     if (channel.breakMode === 'minutes' && channel.breakEveryMin > 0) {
       const threshold = channel.breakEveryMin * 60;
       const woven = [];
       let acc = 0;
-      for (const v of entries) {
-        woven.push(v);
-        acc += dur(v);
-        if (acc >= threshold) { woven.push(...breaks); acc = 0; }
+      for (const it of items) {
+        woven.push(it);
+        acc += dur(it);
+        if (acc >= threshold) { woven.push(...breakItems); acc = 0; }
       }
-      entries = woven;
+      items = woven;
     } else if (channel.breakEvery > 0) {
       const woven = [];
-      entries.forEach((v, i) => {
-        woven.push(v);
-        if ((i + 1) % channel.breakEvery === 0) woven.push(...breaks);
+      items.forEach((it, i) => {
+        woven.push(it);
+        if ((i + 1) % channel.breakEvery === 0) woven.push(...breakItems);
       });
-      entries = woven;
+      items = woven;
     }
   }
 
-  if (entries.length === 0) return null;
+  if (items.length === 0) return null;
 
   const lines = ['ffconcat version 1.0'];
-  for (const v of entries) {
+  for (const { v } of items) {
     const file = channel.mode === 'normalized'
       ? path.join(config.NORMALIZED_DIR, v.normalized.filename)
       : path.join(config.UPLOAD_DIR, v.filename);
-    // Escapa aspas simples para o formato do concat demuxer
     lines.push(`file '${file.replace(/'/g, "'\\''")}'`);
   }
   const listPath = path.join(config.DATA_DIR, `playlist-${channel.id}.txt`);
@@ -167,8 +194,9 @@ function buildConcatFile(channel, entry) {
   if (entry) {
     entry.sourceKind = 'playlist';
     entry.sourceSig = source;
-    entry.playOrder = entries.map((v) => ({
-      id: v.id, name: v.name, duration: v.durationSec || v.duration || 0
+    entry.playOrder = items.map((it) => ({
+      id: it.v.id, name: it.name, duration: it.v.durationSec || it.v.duration || 0,
+      kind: it.kind, campaignId: it.campaignId || null
     }));
   }
   return listPath;
@@ -858,9 +886,11 @@ function nowPlayingOf(entry) {
   let pos = out % total;
   for (let i = 0; i < order.length; i++) {
     if (pos < (order[i].duration || 0)) {
+      const cur = order[i];
+      const nxt = order[(i + 1) % order.length];
       return {
-        now: { id: order[i].id, name: order[i].name },
-        next: { id: order[(i + 1) % order.length].id, name: order[(i + 1) % order.length].name }
+        now: { id: cur.id, name: cur.name, kind: cur.kind || 'program', campaignId: cur.campaignId || null },
+        next: { id: nxt.id, name: nxt.name }
       };
     }
     pos -= order[i].duration || 0;
@@ -1010,6 +1040,32 @@ setInterval(() => {
     try { checkChannelSource(c, 'grade'); } catch (e) { console.error('[agendador]', e.message); }
   }
 }, Math.max(2, config.SCHEDULER_INTERVAL_SEC) * 1000);
+
+// As-run: amostra o que está no ar e registra quando muda de programa/comercial
+// ou entra/sai do ao vivo.
+function sampleAsRun(id, entry) {
+  if (entry.type !== 'channel' || entry.status !== 'running') return;
+  let cur, rec;
+  if (entry.sourceKind === 'live') {
+    cur = '__live__';
+    rec = { type: 'live', title: '(ao vivo)' };
+  } else {
+    const np = nowPlayingOf(entry);
+    if (!np) return;
+    cur = `${np.now.kind}:${np.now.id}`;
+    rec = { type: np.now.kind, title: np.now.name, videoId: np.now.id };
+    if (np.now.campaignId) rec.campaignId = np.now.campaignId;
+  }
+  if (cur === entry.lastLoggedItem) return;
+  entry.lastLoggedItem = cur;
+  const ch = db.get().channels.find((c) => c.id === id);
+  asrun.record(Object.assign({ channelId: id, channel: ch ? ch.name : id }, rec));
+}
+setInterval(() => {
+  for (const [id, entry] of running) {
+    try { sampleAsRun(id, entry); } catch (e) { console.error('[asrun]', e.message); }
+  }
+}, 2000);
 
 // Fonte ao vivo vinculada ligou/desligou: reage na hora, sem esperar o tick
 function handleLiveEdge(key) {

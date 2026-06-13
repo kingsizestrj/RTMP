@@ -7,6 +7,8 @@ Servidor RTMP com painel de gerência web. Permite:
 - **📺 Canais (emissora 24/7)** — playlist padrão em loop + **grade de programação visual** (grade de 30 min × 7 dias, pintável; blocos podem virar a meia-noite), **transição suave** (espera o programa atual terminar antes de trocar de bloco), **vinhetas/comerciais** por contagem ou por minutos, **logo/marca d'água** e **"agora exibindo / a seguir"** em tempo real
 - **🔊 Loudness EBU R128** — o volume é padronizado no upload (-16 LUFS), acabando com o "comercial mais alto que o desenho"
 - **🔞 Classificação indicativa** — cada playlist (programa) tem uma classificação; o selo oficial (L/10/12/14/16/18) aparece no canto quando ela está no ar
+- **📢 Comerciais (campanhas)** — agende um vídeo de anúncio por janela de datas e canais; ele entra nos intervalos automaticamente
+- **📜 As-run log** — registro do que realmente foi ao ar e quando, por canal, com relatório de veiculação dos comerciais (download em JSONL)
 - **📅 Guia de programação (EPG)** — página pública `/guia.html` com o que está no ar agora, o que vem a seguir e a grade do dia de cada canal
 - **🎥 Live com fallback** — vincule uma entrada ao vivo (OBS) ou um relay ao canal: quando publicar, o canal corta para a live; quando cair, volta para a playlist sozinho
 - **🔁 Relays** — informe um link HTTP/HLS/RTMP/RTSP/SRT/UDP e ele é retransmitido como um novo link RTMP (com opção de loop para VOD)
@@ -79,6 +81,7 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
    - **Retransmita apenas conteúdo que você tem direito de redistribuir.**
    - Se o YouTube bloquear o IP do servidor (erro 403 ou "Sign in to confirm you're not a bot" — comum em VPS/datacenter), exporte os cookies do seu navegador (extensão "Get cookies.txt"), salve em `./data/cookies.txt` e defina `YTDLP_COOKIES=/app/data/cookies.txt` no `.env`.
 7. Para **transmitir ao vivo do OBS**, crie uma *Entrada*, configure o OBS com o servidor `rtmp://SEU_IP:1935/live` e a chave gerada.
+8. Para **veicular comerciais**, vá em *Comerciais → Nova campanha*: escolha o vídeo, a janela de datas e os canais. O anúncio entra nos intervalos (junto das vinhetas) enquanto a campanha estiver ativa. O botão *As-run / relatório* mostra o que foi ao ar e quantas vezes cada comercial foi inserido (com download do log completo).
 
 ### Enviando vídeos já normalizados
 
