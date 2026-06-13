@@ -36,6 +36,7 @@ services:
       NORMALIZE_LOUDNORM_TARGET: ${NORMALIZE_LOUDNORM_TARGET:-I=-16:TP=-1.5:LRA=11}
       # Cookies para YouTube (coloque o arquivo em ./data e aponte o caminho)
       YTDLP_COOKIES: ${YTDLP_COOKIES:-}
+      YTDLP_JS_RUNTIME: ${YTDLP_JS_RUNTIME:-node}
       YTDLP_EXTRA_ARGS: ${YTDLP_EXTRA_ARGS:-}
     volumes:
       - ./data:/app/data

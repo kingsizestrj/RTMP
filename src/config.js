@@ -51,6 +51,10 @@ module.exports = {
   // Válvula de escape para contornar bloqueios sem mexer no código, ex.:
   //   YTDLP_EXTRA_ARGS=--extractor-args youtube:player_client=android,web
   YTDLP_EXTRA_ARGS: (process.env.YTDLP_EXTRA_ARGS || '').split(/\s+/).filter(Boolean),
+  // Runtime JS que o yt-dlp usa para resolver o desafio do player do YouTube
+  // (obrigatório para baixar vídeos normais desde 2025). Como este é um app
+  // Node, o binário 'node' está sempre presente. Vazio desativa (yt-dlp antigo).
+  YTDLP_JS_RUNTIME: process.env.YTDLP_JS_RUNTIME !== undefined ? process.env.YTDLP_JS_RUNTIME : 'node',
 
   // Cache local dos vídeos baixados do YouTube (VOD é baixado uma única vez)
   CACHE_DIR: process.env.CACHE_DIR || path.join(ROOT, 'media', 'cache'),

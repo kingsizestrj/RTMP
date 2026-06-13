@@ -130,6 +130,7 @@ ffmpeg -i entrada.mp4 \
 | `YTDLP_FORMAT` | *(H.264+AAC ≤1080p)* | Seletor de formato do yt-dlp (VOD) |
 | `YTDLP_LIVE_FORMAT` | `b` | Seletor de formato para lives |
 | `YTDLP_COOKIES` | *(vazio)* | Arquivo de cookies para IPs bloqueados pelo YouTube |
+| `YTDLP_JS_RUNTIME` | `node` | Runtime JS para o desafio do player do YouTube (necessário p/ baixar vídeos) |
 | `YTDLP_EXTRA_ARGS` | *(vazio)* | Args extras do yt-dlp (import + relays), ex.: `--extractor-args youtube:player_client=android,web` |
 | `CACHE_DIR` | `media/cache` | Cache dos vídeos baixados do YouTube |
 | `MAX_UPLOAD_MB` | `4096` | Tamanho máximo por arquivo de upload |
