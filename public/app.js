@@ -107,6 +107,64 @@ function parseClock(str) {
 
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
+/* ---------- grade visual (grid de 30 min × 7 dias) ---------- */
+
+const GRID_SLOTS = 48; // 30 min cada
+const PALETTE = ['#3b82f6', '#22c55e', '#eab308', '#ef4444', '#a855f7', '#06b6d4',
+  '#f97316', '#ec4899', '#14b8a6', '#84cc16', '#6366f1', '#f43f5e'];
+
+function slotToTime(slot) {
+  const m = (slot % GRID_SLOTS) * 30;
+  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+}
+function timeToSlot(t) {
+  const [h, m] = String(t).split(':').map(Number);
+  return (h * 60 + m) / 30;
+}
+
+// schedule (blocos) -> grade[7][48] de playlistId|null. Blocos que viram a
+// meia-noite pintam até o fim do dia e o começo do dia seguinte.
+function blocksToGrid(blocks) {
+  const grid = Array.from({ length: 7 }, () => Array(GRID_SLOTS).fill(null));
+  for (const b of blocks || []) {
+    const s = timeToSlot(b.start);
+    const e = timeToSlot(b.end);
+    for (const day of b.days || []) {
+      if (s < e) {
+        for (let i = s; i < e; i++) grid[day][i] = b.playlistId;
+      } else {
+        for (let i = s; i < GRID_SLOTS; i++) grid[day][i] = b.playlistId;
+        const nd = (day + 1) % 7;
+        for (let i = 0; i < e; i++) grid[nd][i] = b.playlistId;
+      }
+    }
+  }
+  return grid;
+}
+
+// grade -> blocos, mesclando trechos iguais e dias com o mesmo padrão.
+function gridToBlocks(grid) {
+  const map = new Map();
+  for (let day = 0; day < 7; day++) {
+    let i = 0;
+    while (i < GRID_SLOTS) {
+      const pl = grid[day][i];
+      if (!pl) { i++; continue; }
+      let j = i;
+      while (j < GRID_SLOTS && grid[day][j] === pl) j++;
+      const start = slotToTime(i);
+      const end = slotToTime(j); // j === 48 -> "00:00" (até a meia-noite)
+      const k = `${start}|${end}|${pl}`;
+      if (!map.has(k)) map.set(k, { start, end, playlistId: pl, days: new Set() });
+      map.get(k).days.add(day);
+      i = j;
+    }
+  }
+  return [...map.values()].map((b) => ({
+    days: [...b.days].sort((x, y) => x - y), start: b.start, end: b.end, playlistId: b.playlistId
+  }));
+}
+
 function statusBadge(st) {
   const labels = { running: 'NO AR', stopped: 'PARADO', restarting: 'REINICIANDO', starting: 'INICIANDO', downloading: 'BAIXANDO', error: 'ERRO' };
   return `<span class="badge ${esc(st)}">${labels[st] || esc(st)}</span>`;
@@ -519,8 +577,10 @@ async function loadChannels() {
           <div class="item-sub">
             ${c.defaultPlaylistSize} vídeo(s) na playlist padrão${c.mode === 'normalized' && c.readyCount < c.defaultPlaylistSize ? ` <span style="color:var(--yellow)">(${c.readyCount} normalizados)</span>` : ''}
             ${(c.schedule || []).length ? ` · 📅 ${c.schedule.length} bloco(s) na grade` : ''}
-            ${c.breakEvery > 0 && (c.breakVideoIds || []).length ? ` · 📣 vinhetas a cada ${c.breakEvery}` : ''}
+            ${(c.breakVideoIds || []).length && ((c.breakMode === 'minutes' && c.breakEveryMin > 0) || (c.breakMode !== 'minutes' && c.breakEvery > 0))
+              ? ` · 📣 vinhetas ${c.breakMode === 'minutes' ? `a cada ${c.breakEveryMin}min` : `a cada ${c.breakEvery} vídeo(s)`}` : ''}
             ${c.liveInputId ? ' · 🎥 fallback de live' : ''}
+            ${c.logo ? ' · 🎨 logo' : ''}
             · ${modeLabel(c.mode)}${c.mode === 'transcode' ? ` ${esc(c.resolution)} @ ${esc(c.videoBitrate)}` : ''}
             ${c.shuffle ? ' · 🔀 aleatório' : ''}${c.autostart ? ' · ⏯ autostart' : ''}
             ${c.restarts ? ` · ${c.restarts} restart(s)` : ''}${speedInfo(c)}
@@ -541,29 +601,19 @@ $('#new-channel-btn').addEventListener('click', async () => {
 });
 
 async function editChannel(id) {
-  const [channels, videos, playlists, inputs, relays] = await Promise.all([
-    api('/channels'), api('/videos'), api('/playlists'), api('/inputs'), api('/relays')
+  const [channels, videos, playlists, inputs, relays, settings] = await Promise.all([
+    api('/channels'), api('/videos'), api('/playlists'), api('/inputs'), api('/relays'), api('/settings')
   ]);
   const c = channels.find((x) => x.id === id);
   if (!c) return;
-  const blocks = (c.schedule || []).map((b) => ({ ...b, days: (b.days || []).slice() }));
+
+  // Estado da grade visual: grade[7][48] de playlistId|null
+  const grid = blocksToGrid(c.schedule || []);
+  const plColor = new Map(playlists.map((p, i) => [p.id, PALETTE[i % PALETTE.length]]));
+  let paintId = playlists.length ? playlists[0].id : null; // playlist "pincel"; '' = borracha
 
   const plOptions = (selected) =>
     playlists.map((p) => `<option value="${p.id}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)} (${(p.videoIds || []).length})</option>`).join('');
-
-  function blocksHtml() {
-    if (blocks.length === 0) return '<p class="muted">Sem blocos — o canal toca a playlist padrão o tempo todo.</p>';
-    return blocks.map((b, i) => `
-      <div class="sched-block">
-        <span class="sched-days">${DAY_LABELS.map((lbl, d) =>
-          `<label title="${lbl}"><input type="checkbox" data-blk-day="${i}:${d}" ${b.days.includes(d) ? 'checked' : ''}>${lbl[0]}</label>`).join('')}</span>
-        <input type="time" data-blk-start="${i}" value="${esc(b.start || '08:00')}">
-        <span class="muted">às</span>
-        <input type="time" data-blk-end="${i}" value="${esc(b.end || '12:00')}">
-        <select data-blk-pl="${i}">${plOptions(b.playlistId)}</select>
-        <button class="btn small danger" data-blk-rm="${i}">✕</button>
-      </div>`).join('');
-  }
 
   openModal(`
     <h3>⚙️ Editar canal</h3>
@@ -576,13 +626,21 @@ async function editChannel(id) {
       </select>
     </div>
     <div class="form-row">
-      <label>📅 Grade de programação (horário do servidor)</label>
-      <div id="ch-blocks">${blocksHtml()}</div>
-      <button class="btn small" id="ch-add-block" style="margin-top:6px">➕ Adicionar bloco</button>
+      <label>📅 Grade de programação (horário do servidor) — escolha uma playlist e pinte os horários; clique e arraste. A borracha limpa.</label>
+      <div id="ch-palette" class="palette"></div>
+      <div id="ch-grid-wrap" class="grid-wrap"></div>
     </div>
     <div class="form-row">
-      <label>📣 Vinhetas/comerciais — inserir a cada
-        <input type="number" id="ch-break-every" value="${c.breakEvery || 0}" min="0" max="100" style="width:70px"> vídeo(s) (0 = desativado)</label>
+      <label>📣 Vinhetas/comerciais</label>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+        <select id="ch-break-mode">
+          <option value="count" ${c.breakMode !== 'minutes' ? 'selected' : ''}>A cada N vídeos</option>
+          <option value="minutes" ${c.breakMode === 'minutes' ? 'selected' : ''}>A cada N minutos</option>
+        </select>
+        <span id="ch-break-count-wrap">a cada <input type="number" id="ch-break-every" value="${c.breakEvery || 0}" min="0" max="100" style="width:64px"> vídeo(s)</span>
+        <span id="ch-break-min-wrap">a cada <input type="number" id="ch-break-min" value="${c.breakEveryMin || 0}" min="0" max="600" style="width:64px"> minuto(s)</span>
+        <span class="muted">(0 = sem intervalos)</span>
+      </div>
       <div class="playlist-pick" style="max-height:120px">
         ${videos.map((v) => `<label><input type="checkbox" data-break-video="${v.id}" ${(c.breakVideoIds || []).includes(v.id) ? 'checked' : ''}> ${esc(v.name)} <span class="muted">(${fmtDuration(v.duration)})</span></label>`).join('') || '<p class="muted">Sem vídeos.</p>'}
       </div>
@@ -594,6 +652,17 @@ async function editChannel(id) {
         ${inputs.length ? `<optgroup label="Entradas ao vivo (OBS)">${inputs.map((i) => `<option value="${i.id}" ${c.liveInputId === i.id ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</optgroup>` : ''}
         ${relays.length ? `<optgroup label="Relays (YouTube etc.)">${relays.map((r) => `<option value="${r.id}" ${c.liveInputId === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</optgroup>` : ''}
       </select>
+    </div>
+    <div class="form-row">
+      <label>🎨 Logo / marca d'água ${settings.logo ? '<span class="muted">(logo enviada ✓)</span>' : '<span style="color:var(--yellow)">(nenhuma logo enviada ainda)</span>'}</label>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+        <label class="checkbox-row"><input type="checkbox" id="ch-logo" ${c.logo ? 'checked' : ''}> Exibir logo no canal</label>
+        <select id="ch-logo-pos">
+          ${[['tr', 'Sup. direita'], ['tl', 'Sup. esquerda'], ['br', 'Inf. direita'], ['bl', 'Inf. esquerda']].map(([v, l]) => `<option value="${v}" ${(c.logoPosition || 'tr') === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
+        <label class="btn small">⬆️ Enviar PNG<input type="file" id="ch-logo-file" accept="image/png" hidden></label>
+      </div>
+      <p class="muted">⚠️ Ativar a logo re-encoda o vídeo (custa CPU, sai do modo cópia direta). A logo é global (vale para todos os canais).</p>
     </div>
     <div class="form-row"><label>Modo de saída</label>
       <select id="ch-mode">
@@ -631,31 +700,95 @@ async function editChannel(id) {
       <button class="btn primary" id="ch-save">Salvar</button>
     </div>`);
 
-  // Grade: blocos editados num array local e re-renderizados a cada mudança
-  const blocksEl = $('#ch-blocks');
-  function syncBlocksFromDom() {
-    blocksEl.querySelectorAll('[data-blk-start]').forEach((el) => { blocks[+el.dataset.blkStart].start = el.value; });
-    blocksEl.querySelectorAll('[data-blk-end]').forEach((el) => { blocks[+el.dataset.blkEnd].end = el.value; });
-    blocksEl.querySelectorAll('[data-blk-pl]').forEach((el) => { blocks[+el.dataset.blkPl].playlistId = el.value; });
-    blocksEl.querySelectorAll('[data-blk-day]').forEach((el) => {
-      const [i, d] = el.dataset.blkDay.split(':').map(Number);
-      const days = blocks[i].days;
-      if (el.checked) { if (!days.includes(d)) days.push(d); }
-      else { const idx = days.indexOf(d); if (idx !== -1) days.splice(idx, 1); }
-    });
-  }
-  blocksEl.addEventListener('click', (e) => {
-    if (e.target.dataset.blkRm != null) {
-      syncBlocksFromDom();
-      blocks.splice(+e.target.dataset.blkRm, 1);
-      blocksEl.innerHTML = blocksHtml();
+  // ----- Grade visual: paleta de playlists + grid pintável -----
+  const paletteEl = $('#ch-palette');
+  const gridWrap = $('#ch-grid-wrap');
+
+  function renderPalette() {
+    if (playlists.length === 0) {
+      paletteEl.innerHTML = '<span class="muted">Crie playlists para montar a grade.</span>';
+      return;
     }
+    paletteEl.innerHTML = playlists.map((p) =>
+      `<button type="button" class="pal-chip${paintId === p.id ? ' sel' : ''}" data-paint="${p.id}" style="--c:${plColor.get(p.id)}">${esc(p.name)}</button>`
+    ).join('') + `<button type="button" class="pal-chip eraser${paintId === '' ? ' sel' : ''}" data-paint="">🧽 Borracha</button>`;
+  }
+
+  function cellTitle(slot, pl) {
+    const name = pl ? ((playlists.find((p) => p.id === pl) || {}).name || '') : '';
+    return slotToTime(slot) + (name ? ' · ' + name : '');
+  }
+
+  function renderGrid() {
+    let head = '<div class="grid-row grid-head"><span class="grid-daylabel"></span>';
+    for (let h = 0; h < 24; h++) head += `<span class="grid-hour">${String(h).padStart(2, '0')}</span>`;
+    head += '</div>';
+    let rows = '';
+    for (let day = 0; day < 7; day++) {
+      rows += `<div class="grid-row"><span class="grid-daylabel">${DAY_LABELS[day]}</span>`;
+      for (let s = 0; s < GRID_SLOTS; s++) {
+        const pl = grid[day][s];
+        rows += `<span class="grid-cell${s % 2 ? ' half' : ''}" data-day="${day}" data-slot="${s}" title="${esc(cellTitle(s, pl))}" style="background:${pl ? plColor.get(pl) : 'transparent'}"></span>`;
+      }
+      rows += '</div>';
+    }
+    gridWrap.innerHTML = head + rows;
+  }
+
+  function paintCell(el) {
+    const day = +el.dataset.day, slot = +el.dataset.slot;
+    if (Number.isNaN(day) || Number.isNaN(slot)) return;
+    grid[day][slot] = paintId || null;
+    el.style.background = paintId ? plColor.get(paintId) : 'transparent';
+    el.title = cellTitle(slot, paintId || null);
+  }
+
+  renderPalette();
+  renderGrid();
+
+  paletteEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-paint]');
+    if (!b) return;
+    paintId = b.dataset.paint;
+    renderPalette();
   });
-  $('#ch-add-block').addEventListener('click', () => {
-    if (playlists.length === 0) return toast('Crie uma playlist primeiro (aba Playlists)', true);
-    syncBlocksFromDom();
-    blocks.push({ days: [1, 2, 3, 4, 5], start: '08:00', end: '12:00', playlistId: playlists[0].id });
-    blocksEl.innerHTML = blocksHtml();
+
+  let painting = false;
+  gridWrap.addEventListener('mousedown', (e) => {
+    const cell = e.target.closest('.grid-cell');
+    if (!cell) return;
+    e.preventDefault();
+    painting = true;
+    paintCell(cell);
+  });
+  gridWrap.addEventListener('mouseover', (e) => {
+    if (!painting) return;
+    const cell = e.target.closest('.grid-cell');
+    if (cell) paintCell(cell);
+  });
+  document.addEventListener('mouseup', () => { painting = false; });
+
+  // ----- Vinhetas: alterna contagem × minutos -----
+  const syncBreakMode = () => {
+    const m = $('#ch-break-mode').value;
+    $('#ch-break-count-wrap').style.display = m === 'count' ? '' : 'none';
+    $('#ch-break-min-wrap').style.display = m === 'minutes' ? '' : 'none';
+  };
+  $('#ch-break-mode').addEventListener('change', syncBreakMode);
+  syncBreakMode();
+
+  // ----- Logo: upload do PNG global -----
+  $('#ch-logo-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('logo', file);
+    try {
+      await api('/settings/logo', { method: 'POST', body: fd });
+      toast('Logo enviada! Marque "Exibir logo" e salve.');
+      $('#ch-logo').checked = true;
+    } catch (err) { toast(err.message, true); }
+    e.target.value = '';
   });
 
   // Opções de transcode só fazem sentido no modo "transcode"
@@ -667,7 +800,6 @@ async function editChannel(id) {
 
   $('#modal-cancel').addEventListener('click', closeModal);
   $('#ch-save').addEventListener('click', async () => {
-    syncBlocksFromDom();
     const breakVideoIds = [...$('#modal').querySelectorAll('[data-break-video]:checked')]
       .map((el) => el.dataset.breakVideo);
     try {
@@ -676,10 +808,14 @@ async function editChannel(id) {
         body: {
           name: $('#ch-name').value,
           defaultPlaylistId: $('#ch-default-pl').value,
-          schedule: blocks,
+          schedule: gridToBlocks(grid),
           breakVideoIds,
+          breakMode: $('#ch-break-mode').value,
           breakEvery: parseInt($('#ch-break-every').value, 10) || 0,
+          breakEveryMin: parseInt($('#ch-break-min').value, 10) || 0,
           liveInputId: $('#ch-live-input').value,
+          logo: $('#ch-logo').checked,
+          logoPosition: $('#ch-logo-pos').value,
           mode: $('#ch-mode').value,
           resolution: $('#ch-res').value,
           videoBitrate: $('#ch-vb').value,

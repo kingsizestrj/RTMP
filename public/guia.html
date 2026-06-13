@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guia de Programação</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { padding: 24px; max-width: 1000px; margin: 0 auto; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .epg-updated { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+    .epg-channel {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px; margin-bottom: 16px;
+    }
+    .epg-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+    .epg-name { font-size: 18px; font-weight: 700; }
+    .epg-now { font-size: 15px; margin: 8px 0; }
+    .epg-now b { color: var(--green); }
+    .epg-next { color: var(--muted); font-size: 14px; }
+    .epg-sched { margin-top: 12px; display: grid; gap: 4px; }
+    .epg-slot { display: flex; gap: 12px; font-size: 14px; padding: 4px 0; border-top: 1px solid var(--border); }
+    .epg-slot .t { color: var(--accent); font-variant-numeric: tabular-nums; flex: 0 0 110px; }
+    .epg-slot.on { background: rgba(59,130,246,.08); border-radius: 6px; padding: 4px 8px; }
+    .off { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>📺 Guia de Programação</h1>
+  <div class="epg-updated" id="updated"></div>
+  <div id="epg"></div>
+
+  <script>
+    const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function timeToMin(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m; }
+
+    // Bloco ativo agora? (mesma lógica do servidor, incluindo cruzar meia-noite)
+    function activeNow(b, day, mins) {
+      const s = timeToMin(b.start), e = timeToMin(b.end);
+      if (s < e) return b.days.includes(day) && mins >= s && mins < e;
+      const prev = (day + 6) % 7;
+      return (b.days.includes(day) && mins >= s) || (b.days.includes(prev) && mins < e);
+    }
+
+    async function load() {
+      let data;
+      try {
+        const res = await fetch('/api/public/epg');
+        data = await res.json();
+      } catch {
+        document.getElementById('epg').innerHTML = '<p class="off">Não foi possível carregar o guia.</p>';
+        return;
+      }
+      const now = new Date(data.now);
+      const day = now.getDay();
+      const mins = now.getHours() * 60 + now.getMinutes();
+      document.getElementById('updated').textContent =
+        'Atualizado às ' + now.toLocaleTimeString('pt-BR');
+
+      if (!data.channels.length) {
+        document.getElementById('epg').innerHTML = '<p class="off">Nenhum canal configurado.</p>';
+        return;
+      }
+
+      document.getElementById('epg').innerHTML = data.channels.map((c) => {
+        const todays = (c.schedule || [])
+          .filter((b) => b.days.includes(day) || (timeToMin(b.end) <= timeToMin(b.start) && b.days.includes((day + 6) % 7)))
+          .sort((a, b) => timeToMin(a.start) - timeToMin(b.start));
+        const status = c.live
+          ? '<span class="badge error">🔴 AO VIVO</span>'
+          : (c.on ? '<span class="badge running">NO AR</span>' : '<span class="badge stopped">FORA DO AR</span>');
+        const nowLine = c.on
+          ? `<div class="epg-now">▶ <b>${esc(c.nowPlaying || c.currentProgram || '—')}</b>${c.upNext ? ` <span class="epg-next">· a seguir: ${esc(c.upNext)}</span>` : ''}</div>`
+          : '<div class="off">Canal fora do ar.</div>';
+        const sched = todays.length
+          ? `<div class="epg-sched">${todays.map((b) => `
+              <div class="epg-slot ${activeNow(b, day, mins) ? 'on' : ''}">
+                <span class="t">${esc(b.start)}–${esc(b.end)}</span>
+                <span>${esc(b.playlist)}</span>
+              </div>`).join('')}</div>`
+          : '<div class="off" style="margin-top:8px">Sem grade definida — programação contínua.</div>';
+        return `<div class="epg-channel">
+          <div class="epg-head"><span class="epg-name">${esc(c.name)}</span>${status}</div>
+          ${nowLine}
+          ${sched}
+        </div>`;
+      }).join('');
+    }
+
+    load();
+    setInterval(load, 15000);
+  </script>
+</body>
+</html>

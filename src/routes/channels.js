@@ -35,7 +35,7 @@ function publicView(channel) {
 // Valida os blocos da grade: dias 0-6, horários HH:MM com início < fim e
 // playlist existente. Retorna null se algo for inválido.
 function sanitizeSchedule(blocks, state) {
-  if (!Array.isArray(blocks) || blocks.length > 50) return null;
+  if (!Array.isArray(blocks) || blocks.length > 500) return null;
   const out = [];
   for (const b of blocks) {
     if (!b || typeof b !== 'object') return null;
@@ -45,7 +45,9 @@ function sanitizeSchedule(blocks, state) {
     if (days.length === 0) return null;
     if (typeof b.start !== 'string' || !TIME_RE.test(b.start)) return null;
     if (typeof b.end !== 'string' || !TIME_RE.test(b.end)) return null;
-    if (b.start >= b.end) return null;
+    // início == fim é ambíguo (zero ou 24h); início > fim é válido e significa
+    // que o bloco vira a meia-noite (ex.: 23:00→02:00 ou 23:00→00:00).
+    if (b.start === b.end) return null;
     if (!state.playlists.some((p) => p.id === b.playlistId)) return null;
     out.push({ id: b.id || db.id(), days, start: b.start, end: b.end, playlistId: b.playlistId });
   }
@@ -67,8 +69,12 @@ router.post('/', async (req, res) => {
     defaultPlaylistId: '',
     schedule: [],          // [{ id, days[0-6], start 'HH:MM', end 'HH:MM', playlistId }]
     breakVideoIds: [],     // vinhetas/comerciais
+    breakMode: 'count',    // 'count' (a cada N vídeos) | 'minutes' (a cada N min)
     breakEvery: 0,         // a cada N vídeos de conteúdo (0 = sem intervalos)
+    breakEveryMin: 0,      // a cada N minutos de conteúdo (modo 'minutes')
     liveInputId: '',       // entrada ao vivo prioritária (fallback)
+    logo: false,           // overlay de marca d'água (custa CPU — re-encoda)
+    logoPosition: 'tr',    // tr | tl | br | bl
     shuffle: false,
     mode: 'normalized',    // 'normalized' | 'transcode' | 'copy'
     resolution: '1280x720',
@@ -105,7 +111,11 @@ router.patch('/:id', async (req, res) => {
     const valid = new Set(state.videos.map((v) => v.id));
     channel.breakVideoIds = b.breakVideoIds.filter((id) => valid.has(id));
   }
+  if (b.breakMode === 'count' || b.breakMode === 'minutes') channel.breakMode = b.breakMode;
   if (Number.isInteger(b.breakEvery) && b.breakEvery >= 0 && b.breakEvery <= 100) channel.breakEvery = b.breakEvery;
+  if (Number.isInteger(b.breakEveryMin) && b.breakEveryMin >= 0 && b.breakEveryMin <= 600) channel.breakEveryMin = b.breakEveryMin;
+  if (typeof b.logo === 'boolean') channel.logo = b.logo;
+  if (['tr', 'tl', 'br', 'bl'].includes(b.logoPosition)) channel.logoPosition = b.logoPosition;
   if (typeof b.liveInputId === 'string') {
     // Fonte ao vivo: entrada (OBS) ou relay
     if (b.liveInputId === '' ||

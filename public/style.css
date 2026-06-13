@@ -211,3 +211,32 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .toast.error { border-color: var(--red); color: var(--red); }
 
 .error-msg { color: var(--red); font-size: 13px; text-align: center; min-height: 16px; }
+
+/* Grade visual */
+.palette { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.pal-chip {
+  border: 2px solid transparent; border-radius: 8px; cursor: pointer;
+  padding: 5px 10px; font-size: 13px; color: #fff;
+  background: var(--c, var(--bg3)); position: relative;
+}
+.pal-chip.eraser { background: var(--bg3); color: var(--text); }
+.pal-chip.sel { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg); }
+
+.grid-wrap {
+  overflow-x: auto; border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px; background: var(--bg); user-select: none;
+}
+.grid-row { display: flex; align-items: stretch; }
+.grid-daylabel {
+  flex: 0 0 38px; font-size: 12px; color: var(--muted);
+  display: flex; align-items: center; justify-content: flex-end; padding-right: 6px;
+}
+.grid-head .grid-hour {
+  flex: 0 0 32px; font-size: 10px; color: var(--muted); text-align: left;
+}
+.grid-cell {
+  flex: 0 0 16px; height: 22px; border-right: 1px solid var(--bg2);
+  border-bottom: 1px solid var(--bg2); cursor: pointer; box-sizing: border-box;
+}
+.grid-cell.half { border-right-color: var(--border); }
+.grid-cell:hover { outline: 1px solid var(--text); outline-offset: -1px; }

@@ -30,6 +30,30 @@ app.use('/api/playlists', auth.requireAuth, require('./routes/playlists'));
 app.use('/api/channels', auth.requireAuth, require('./routes/channels'));
 app.use('/api/relays', auth.requireAuth, require('./routes/relays'));
 app.use('/api/inputs', auth.requireAuth, require('./routes/inputs'));
+app.use('/api/settings', auth.requireAuth, require('./routes/settings'));
+
+// Guia de programação (EPG) — público, sem login: nome do canal, no ar agora,
+// a seguir e a grade do dia. Não expõe chaves de stream.
+app.get('/api/public/epg', (req, res) => {
+  const state = db.get();
+  const plName = new Map(state.playlists.map((p) => [p.id, p.name]));
+  const channels = state.channels.map((c) => {
+    const st = sm.statusOf(c.id);
+    const block = sm.currentBlock(c);
+    return {
+      name: c.name,
+      on: st.status === 'running',
+      live: st.sourceKind === 'live',
+      nowPlaying: st.nowPlaying ? st.nowPlaying.name : null,
+      upNext: st.upNext ? st.upNext.name : null,
+      currentProgram: block ? (plName.get(block.playlistId) || '?') : (c.defaultPlaylistId ? (plName.get(c.defaultPlaylistId) || '?') : null),
+      schedule: (c.schedule || [])
+        .map((b) => ({ days: b.days, start: b.start, end: b.end, playlist: plName.get(b.playlistId) || '?' }))
+        .sort((a, b) => a.start.localeCompare(b.start))
+    };
+  });
+  res.json({ now: new Date().toISOString(), channels });
+});
 
 // Dashboard: visão geral + streams publicando agora
 app.get('/api/status', auth.requireAuth, (req, res) => {

@@ -36,7 +36,11 @@ function migrate(s) {
     if (!Array.isArray(c.schedule)) { c.schedule = []; changed = true; }
     if (!Array.isArray(c.breakVideoIds)) { c.breakVideoIds = []; changed = true; }
     if (typeof c.breakEvery !== 'number') { c.breakEvery = 0; changed = true; }
+    if (c.breakMode !== 'minutes' && c.breakMode !== 'count') { c.breakMode = 'count'; changed = true; }
+    if (typeof c.breakEveryMin !== 'number') { c.breakEveryMin = 0; changed = true; }
     if (typeof c.liveInputId !== 'string') { c.liveInputId = ''; changed = true; }
+    if (typeof c.logo !== 'boolean') { c.logo = false; changed = true; }
+    if (typeof c.logoPosition !== 'string') { c.logoPosition = 'tr'; changed = true; }
   }
   return changed;
 }

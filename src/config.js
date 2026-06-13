@@ -56,6 +56,17 @@ module.exports = {
   UPLOAD_DIR: process.env.UPLOAD_DIR || path.join(ROOT, 'media', 'uploads'),
   NORMALIZED_DIR: process.env.NORMALIZED_DIR || path.join(ROOT, 'media', 'normalized'),
 
+  // Logo/marca d'água (PNG enviado pelo painel) para overlay nos canais
+  LOGO_PATH: process.env.LOGO_PATH || path.join(ROOT, 'data', 'logo.png'),
+
+  // Transição de grade: ao trocar de bloco, espera o programa atual terminar
+  // antes de cortar (comportamento de emissora). Limite máximo dessa espera —
+  // além disso, corta mesmo no meio (ex.: bloco entrou no meio de um filme).
+  BLOCK_GRACE_MAX_SEC: parseInt(process.env.BLOCK_GRACE_MAX_SEC || '600', 10),
+
+  // De quanto em quanto tempo o agendador confere se a grade mudou de bloco.
+  SCHEDULER_INTERVAL_SEC: parseInt(process.env.SCHEDULER_INTERVAL_SEC || '20', 10),
+
   // Watchdog: reinicia o ffmpeg se ficar este tempo sem progresso (0 desativa)
   STALL_TIMEOUT_SEC: parseInt(process.env.STALL_TIMEOUT_SEC || '45', 10),
 

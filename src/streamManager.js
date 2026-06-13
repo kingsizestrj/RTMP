@@ -62,6 +62,27 @@ function shuffleArray(arr) {
   return a;
 }
 
+function toMin(hhmm) {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  return h * 60 + m;
+}
+
+// Um bloco está ativo neste dia/minuto? Trata blocos que viram a meia-noite
+// (fim <= início, ex.: 23:00→00:00 ou 23:00→02:00): valem da hora de início
+// até a meia-noite no dia de início, e da meia-noite até o fim no dia seguinte.
+// 'days' são os dias em que o bloco COMEÇA.
+function blockActiveAt(b, day, mins) {
+  const s = toMin(b.start);
+  const e = toMin(b.end);
+  const days = b.days || [];
+  if (s < e) {
+    return days.includes(day) && mins >= s && mins < e;
+  }
+  // cruza a meia-noite
+  const prevDay = (day + 6) % 7;
+  return (days.includes(day) && mins >= s) || (days.includes(prevDay) && mins < e);
+}
+
 // Bloco da grade ativo para o canal neste momento (horário local do servidor;
 // defina TZ no ambiente para o fuso correto).
 function currentBlock(channel, now) {
@@ -69,9 +90,7 @@ function currentBlock(channel, now) {
   const day = d.getDay();
   const mins = d.getHours() * 60 + d.getMinutes();
   for (const b of channel.schedule || []) {
-    const [sh, sm] = b.start.split(':').map(Number);
-    const [eh, em] = b.end.split(':').map(Number);
-    if ((b.days || []).includes(day) && mins >= sh * 60 + sm && mins < eh * 60 + em) return b;
+    if (blockActiveAt(b, day, mins)) return b;
   }
   return null;
 }
@@ -107,15 +126,29 @@ function buildConcatFile(channel, entry) {
   }
   if (channel.shuffle) entries = shuffleArray(entries);
 
-  // Vinhetas/comerciais a cada N vídeos de conteúdo
+  // Vinhetas/comerciais intercaladas: por contagem (a cada N vídeos) ou por
+  // tempo (a cada N minutos de conteúdo acumulado).
   const breaks = selectEntries(channel, channel.breakVideoIds || []);
-  if (breaks.length > 0 && channel.breakEvery > 0 && entries.length > 0) {
-    const woven = [];
-    entries.forEach((v, i) => {
-      woven.push(v);
-      if ((i + 1) % channel.breakEvery === 0) woven.push(...breaks);
-    });
-    entries = woven;
+  if (breaks.length > 0 && entries.length > 0) {
+    const dur = (v) => v.durationSec || v.duration || 0;
+    if (channel.breakMode === 'minutes' && channel.breakEveryMin > 0) {
+      const threshold = channel.breakEveryMin * 60;
+      const woven = [];
+      let acc = 0;
+      for (const v of entries) {
+        woven.push(v);
+        acc += dur(v);
+        if (acc >= threshold) { woven.push(...breaks); acc = 0; }
+      }
+      entries = woven;
+    } else if (channel.breakEvery > 0) {
+      const woven = [];
+      entries.forEach((v, i) => {
+        woven.push(v);
+        if ((i + 1) % channel.breakEvery === 0) woven.push(...breaks);
+      });
+      entries = woven;
+    }
   }
 
   if (entries.length === 0) return null;
@@ -175,6 +208,56 @@ function outputArgs(key) {
   return ['-f', 'flv', '-flvflags', 'no_duration_filesize', rtmpUrlFor(key)];
 }
 
+// Só o codec de vídeo (sem áudio), para quando precisamos re-encodar o vídeo
+// mas copiar o áudio (caso do overlay de logo sobre conteúdo já normalizado).
+function x264VideoArgs(opts) {
+  const vb = opts.videoBitrate || config.NORMALIZE_VIDEO_BITRATE;
+  const fps = opts.fps || config.NORMALIZE_FPS;
+  const preset = PRESETS.has(opts.preset) ? opts.preset : 'veryfast';
+  const bufsize = parseInt(vb, 10) * 2 + 'k';
+  const args = [
+    '-c:v', 'libx264', '-preset', preset,
+    '-b:v', vb, '-maxrate', vb, '-bufsize', bufsize,
+    '-g', String(fps * 2), '-sc_threshold', '0', '-pix_fmt', 'yuv420p'
+  ];
+  if (config.FFMPEG_THREADS) args.push('-threads', config.FFMPEG_THREADS);
+  return args;
+}
+
+const LOGO_POS = {
+  tr: 'W-w-20:20', tl: '20:20', br: 'W-w-20:H-h-20', bl: '20:H-h-20'
+};
+
+function logoEnabled(channel) {
+  return channel.logo && fs.existsSync(config.LOGO_PATH);
+}
+
+// Insere a logo (marca d'água) sobre o vídeo. Como overlay exige decodificar e
+// re-encodar o vídeo, isso custa CPU — o áudio segue em cópia quando possível.
+// `mainArgs` já contém o(s) -i da fonte principal; devolve os args completos
+// de saída (filtro + codecs), partindo do input de vídeo `vIndex`.
+function applyLogoArgs(channel, audioCopyable) {
+  const pos = LOGO_POS[channel.logoPosition] || LOGO_POS.tr;
+  // No modo transcode também normalizamos a resolução antes do overlay; nos
+  // demais (normalized/live) a fonte já vem no tamanho certo.
+  let filter;
+  if (channel.mode === 'transcode') {
+    const [w, h] = (channel.resolution || '1280x720').split('x').map(Number);
+    filter = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1[bg];[bg][1:v]overlay=${pos}[v]`;
+  } else {
+    filter = `[0:v][1:v]overlay=${pos}[v]`;
+  }
+  const out = [
+    '-i', config.LOGO_PATH,
+    '-filter_complex', filter,
+    '-map', '[v]', '-map', '0:a?',
+    ...x264VideoArgs(channel)
+  ];
+  if (audioCopyable) out.push('-c:a', 'copy', '-bsf:a', 'aac_adtstoasc');
+  else out.push('-c:a', 'aac', '-b:a', channel.audioBitrate || '128k', '-ar', '44100', '-ac', '2');
+  return out;
+}
+
 // Fonte ao vivo prioritária do canal: uma entrada (OBS) OU um relay.
 // Com um relay "somente ao vivo" como fonte, o canal vira o "algo entre uma
 // live e outra": playlist de espera no ar, corta para o relay quando a live
@@ -204,7 +287,8 @@ function buildChannelArgs(channel, entry) {
       '-nostats', '-progress', 'pipe:1',
       '-i', `rtmp://127.0.0.1:${config.RTMP_PORT}/live/${liveSrc.key}`
     ];
-    if (channel.mode === 'transcode') liveArgs.push(...transcodeArgs(channel));
+    if (logoEnabled(channel)) liveArgs.push(...applyLogoArgs(channel, false));
+    else if (channel.mode === 'transcode') liveArgs.push(...transcodeArgs(channel));
     else liveArgs.push('-c', 'copy');
     liveArgs.push(...outputArgs(channel.key));
     return liveArgs;
@@ -221,7 +305,11 @@ function buildChannelArgs(channel, entry) {
     '-f', 'concat', '-safe', '0',
     '-i', listPath
   ];
-  if (channel.mode === 'normalized') {
+  if (logoEnabled(channel)) {
+    // Overlay de logo: re-encoda o vídeo, copia o áudio quando a fonte é AAC
+    // em TS (normalized) ou outro -c copy compatível.
+    args.push(...applyLogoArgs(channel, channel.mode === 'normalized'));
+  } else if (channel.mode === 'normalized') {
     // Arquivos pré-normalizados (MPEG-TS uniforme): cópia direta, CPU ~zero.
     // O bsf converte o AAC de ADTS (TS) para o formato esperado pelo FLV.
     args.push('-c', 'copy', '-bsf:a', 'aac_adtstoasc');
@@ -673,6 +761,7 @@ function stop(id) {
   if (!entry) return false;
   entry.stopping = true;
   if (entry.retryTimer) clearTimeout(entry.retryTimer);
+  if (entry.transitionTimer) clearTimeout(entry.transitionTimer);
   stopWatchdog(entry);
   killHelper(entry);
   if (entry.proc) {
@@ -725,6 +814,24 @@ function nowPlayingOf(entry) {
     pos -= order[i].duration || 0;
   }
   return null;
+}
+
+// Quantos segundos faltam para o programa (vídeo) atual terminar, a partir da
+// posição do ffmpeg na playlist. Usado para a transição suave de grade.
+function currentItemRemaining(entry) {
+  if (!entry || entry.sourceKind !== 'playlist' || !entry.playOrder) return 0;
+  const order = entry.playOrder;
+  const out = entry.stats ? entry.stats.outTimeSec : null;
+  if (out == null || order.length === 0) return 0;
+  const total = order.reduce((s, v) => s + (v.duration || 0), 0);
+  if (total <= 0) return 0;
+  let pos = out % total;
+  for (const it of order) {
+    const d = it.duration || 0;
+    if (pos < d) return Math.max(0, d - pos);
+    pos -= d;
+  }
+  return 0;
 }
 
 function statusOf(id) {
@@ -786,23 +893,71 @@ function desiredSourceSig(channel) {
   return block ? `block:${block.id}` : 'default';
 }
 
+function clearTransition(entry) {
+  if (entry.transitionTimer) {
+    clearTimeout(entry.transitionTimer);
+    entry.transitionTimer = null;
+  }
+  entry.transitionPending = null;
+}
+
 function checkChannelSource(channel, reason) {
   const entry = running.get(channel.id);
   if (!entry || entry.type !== 'channel' || entry.status !== 'running') return;
   const desired = desiredSourceSig(channel);
-  if (entry.sourceSig === desired) return;
+
+  if (entry.sourceSig === desired) { clearTransition(entry); return; }
   // 'fallback:<block>' significa que o bloco estava sem vídeos utilizáveis e
   // a playlist padrão assumiu — não fica reiniciando em loop por causa disso.
-  if (desired.startsWith('block:') && entry.sourceSig === `fallback:${desired.slice(6)}`) return;
-  pushLog(entry, `Trocando fonte (${reason}): ${entry.sourceSig || '?'} -> ${desired}`);
-  restartIfRunning(channel.id, 'channel');
+  if (desired.startsWith('block:') && entry.sourceSig === `fallback:${desired.slice(6)}`) {
+    clearTransition(entry);
+    return;
+  }
+
+  // Transições que envolvem a fonte ao vivo são IMEDIATAS: corta para a live
+  // assim que ela sobe e volta para a programação assim que ela cai.
+  const involvesLive = desired.startsWith('live:') || entry.sourceKind === 'live';
+  if (involvesLive) {
+    clearTransition(entry);
+    pushLog(entry, `Trocando fonte (${reason}): ${entry.sourceSig || '?'} -> ${desired}`);
+    restartIfRunning(channel.id, 'channel');
+    return;
+  }
+
+  // Troca de bloco (playlist -> playlist): espera o programa atual terminar
+  // antes de cortar — comportamento de emissora, sem corte no meio do episódio.
+  if (entry.transitionTimer && entry.transitionPending === desired) return;
+  clearTransition(entry);
+
+  const remaining = currentItemRemaining(entry);
+  const wait = Math.min(remaining, config.BLOCK_GRACE_MAX_SEC);
+  if (wait <= 2) {
+    pushLog(entry, `Trocando fonte (${reason}): ${entry.sourceSig || '?'} -> ${desired}`);
+    restartIfRunning(channel.id, 'channel');
+    return;
+  }
+
+  entry.transitionPending = desired;
+  pushLog(entry, `Grade (${reason}): programa atual termina em ~${Math.round(wait)}s — troca para ${desired} agendada`);
+  entry.transitionTimer = setTimeout(() => {
+    entry.transitionTimer = null;
+    entry.transitionPending = null;
+    const e2 = running.get(channel.id);
+    if (!e2 || e2.status !== 'running') return;
+    const ch2 = db.get().channels.find((c) => c.id === channel.id);
+    if (!ch2) return;
+    const want = desiredSourceSig(ch2);
+    if (e2.sourceSig === want) return;
+    pushLog(e2, `Grade: programa terminou — trocando ${e2.sourceSig || '?'} -> ${want}`);
+    restartIfRunning(channel.id, 'channel');
+  }, wait * 1000);
 }
 
 setInterval(() => {
   for (const c of db.get().channels) {
     try { checkChannelSource(c, 'grade'); } catch (e) { console.error('[agendador]', e.message); }
   }
-}, 20000);
+}, Math.max(2, config.SCHEDULER_INTERVAL_SEC) * 1000);
 
 // Fonte ao vivo vinculada ligou/desligou: reage na hora, sem esperar o tick
 function handleLiveEdge(key) {
@@ -816,5 +971,6 @@ rtmpServer.events.on('unpublish', handleLiveEdge);
 
 module.exports = {
   startChannel, startRelay, stop, restartIfRunning,
-  statusOf, isRunning, autostartAll, shutdown, isYtdlpUrl, listChannelLives
+  statusOf, isRunning, autostartAll, shutdown, isYtdlpUrl, listChannelLives,
+  currentBlock, blockActiveAt, toMin
 };

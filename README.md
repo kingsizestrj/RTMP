@@ -4,8 +4,9 @@ Servidor RTMP com painel de gerência web. Permite:
 
 - **🎬 Acervo de vídeos** — upload de vídeos pelo painel (drag & drop, multi-arquivo, barra de progresso) e divisor de episódios (✂️ corta um arquivo grande em partes, sem re-encode)
 - **🎞 Playlists** — listas ordenadas reutilizáveis, com indicação de onde são usadas
-- **📺 Canais (emissora 24/7)** — playlist padrão em loop infinito + **grade de programação** (blocos por dia da semana/horário apontando para playlists), **vinhetas/comerciais** a cada N vídeos e **"agora exibindo / a seguir"** em tempo real
-- **🎥 Live com fallback** — vincule uma entrada ao vivo ao canal: quando o OBS publicar, o canal corta para a live; quando cair, volta para a playlist sozinho
+- **📺 Canais (emissora 24/7)** — playlist padrão em loop + **grade de programação visual** (grade de 30 min × 7 dias, pintável; blocos podem virar a meia-noite), **transição suave** (espera o programa atual terminar antes de trocar de bloco), **vinhetas/comerciais** por contagem ou por minutos, **logo/marca d'água** e **"agora exibindo / a seguir"** em tempo real
+- **📅 Guia de programação (EPG)** — página pública `/guia.html` com o que está no ar agora, o que vem a seguir e a grade do dia de cada canal
+- **🎥 Live com fallback** — vincule uma entrada ao vivo (OBS) ou um relay ao canal: quando publicar, o canal corta para a live; quando cair, volta para a playlist sozinho
 - **🔁 Relays** — informe um link HTTP/HLS/RTMP/RTSP/SRT/UDP e ele é retransmitido como um novo link RTMP (com opção de loop para VOD)
 - **▶️ YouTube/Twitch** — cole o link de um vídeo ou live e o relay resolve a mídia real via yt-dlp automaticamente, renovando o link a cada reinício
 - **🎥 Entradas ao vivo** — gere chaves de stream para publicar do OBS/encoder e distribuir pelo link gerado
@@ -60,10 +61,12 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
 1. **Suba vídeos** na aba *Vídeos* (arraste arquivos ou clique em Enviar). Para um arquivo com vários episódios, use o **✂️ divisor**: marque os cortes no player e cada parte vira um vídeo do acervo (sem re-encode, cortes ajustados ao keyframe).
 2. **Monte playlists** na aba *Playlists* (listas ordenadas, reutilizáveis).
 3. **Crie um canal** na aba *Canais*, escolha a **playlist padrão** e clique em **Iniciar**. Opcionalmente configure:
-   - **📅 Grade de programação**: blocos por dia da semana e horário apontando para outras playlists (desenhos de manhã, filmes à noite). Fora dos blocos, vale a playlist padrão. O horário é o do servidor — defina `TZ` (ex.: `America/Sao_Paulo`) no `.env`/compose.
-   - **📣 Vinhetas**: vídeos inseridos a cada N vídeos de conteúdo.
-   - **🎥 Entrada ao vivo prioritária**: quando essa entrada publicar (OBS), o canal corta para a live; quando ela cair, volta para a programação (a troca leva ~2s).
-4. Copie o link **RTMP** gerado — use em qualquer player (VLC: *Mídia → Abrir transmissão de rede*) ou aponte como fonte para outra plataforma. O painel mostra **o que está no ar e o que vem a seguir**.
+   - **📅 Grade de programação visual**: escolha uma playlist na paleta e **pinte os horários** na grade (30 min × 7 dias, clicando e arrastando; a borracha limpa). Fora dos blocos pintados, vale a playlist padrão. Blocos podem **virar a meia-noite** (ex.: 23:00→02:00 para o corujão). O horário é o do servidor — defina `TZ` (ex.: `America/Sao_Paulo`) no `.env`/compose.
+   - **✂️ Transição suave**: ao trocar de bloco, o canal **espera o programa atual terminar** antes de cortar (sem corte no meio do episódio), respeitando o limite `BLOCK_GRACE_MAX_SEC` (padrão 10 min — além disso corta mesmo, ex.: se um bloco pegou o meio de um filme).
+   - **📣 Vinhetas**: vídeos inseridos a cada N vídeos **ou** a cada N minutos de conteúdo.
+   - **🎨 Logo/marca d'água**: envie um PNG (global) e ative por canal, escolhendo o canto. ⚠️ Ativar a logo re-encoda o vídeo (sai do modo cópia direta — custa CPU).
+   - **🎥 Fonte ao vivo prioritária**: uma entrada OBS **ou um relay**; quando publicar, o canal corta para a live; quando cair, volta para a programação (a troca leva ~2s).
+4. Copie o link **RTMP** gerado — use em qualquer player (VLC: *Mídia → Abrir transmissão de rede*) ou aponte como fonte para outra plataforma. O painel mostra **o que está no ar e o que vem a seguir**, e o **📺 Guia** (`/guia.html`) é uma página pública com a grade do dia.
 5. Para **retransmitir um link HTTP** (m3u8, mp4, outra live), crie um *Relay* com a URL de origem — o painel gera o link RTMP de saída. Marque *loop* se a origem for um arquivo de vídeo.
 6. Para **retransmitir do YouTube/Twitch**, cole o link da página (vídeo ou live) no relay — a opção *yt-dlp* é marcada automaticamente.
    - **Lives que mudam de link a cada transmissão** (ex.: cada jogo é um link novo): use a URL permanente do canal, `https://www.youtube.com/@NomeDoCanal/live` — ela sempre aponta para a live atual. A opção *📡 somente ao vivo* (marcada automaticamente para esse formato) faz o relay **aguardar a próxima live e engatar sozinho** quando ela começar, sem mexer em nada entre uma transmissão e outra. Deixe com *autostart* e esqueça.
@@ -122,6 +125,9 @@ ffmpeg -i entrada.mp4 \
 | `MAX_UPLOAD_MB` | `4096` | Tamanho máximo por arquivo de upload |
 | `ALLOW_ANY_PUBLISH` | `false` | Aceitar publicação RTMP com qualquer chave |
 | `STALL_TIMEOUT_SEC` | `45` | Watchdog: reinicia o ffmpeg se ficar este tempo sem progresso (`0` desativa) |
+| `BLOCK_GRACE_MAX_SEC` | `600` | Espera máxima pelo fim do programa atual na troca de bloco da grade |
+| `SCHEDULER_INTERVAL_SEC` | `20` | Frequência com que o agendador confere a grade |
+| `TZ` | *(do sistema)* | Fuso horário usado pela grade de programação |
 | `FFMPEG_THREADS` | *(auto)* | Limita threads do ffmpeg nos streams ao vivo |
 | `NORMALIZE_ENABLED` | `true` | Normalizar vídeos no upload |
 | `NORMALIZE_RESOLUTION` / `NORMALIZE_FPS` | `1280x720` / `30` | Perfil de normalização |
