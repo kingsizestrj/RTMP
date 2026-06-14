@@ -122,6 +122,9 @@ app.listen(config.PANEL_PORT, () => {
 sm.autostartAll();
 normalizer.bootstrap();
 
+// Monitor de saúde + alertas no Telegram
+require('./monitor').start();
+
 function gracefulExit() {
   console.log('Encerrando streams...');
   sm.shutdown();

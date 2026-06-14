@@ -242,6 +242,50 @@ $('#logout-btn').addEventListener('click', async () => {
   showLogin();
 });
 
+/* ---------- alertas (Telegram) ---------- */
+
+$('#alerts-btn').addEventListener('click', async () => {
+  let s;
+  try { s = (await api('/settings')).telegram; } catch (err) { return toast(err.message, true); }
+  const ALERTS = [['offline', 'Canal/relay caiu'], ['recover', 'Voltou ao ar'], ['cpu', 'CPU alta'], ['disk', 'Disco baixo'], ['slow', 'Encoder lento (CPU não acompanha)']];
+  openModal(`
+    <h3>🔔 Alertas no Telegram</h3>
+    <div class="form-row checkbox-row"><input type="checkbox" id="tg-enabled" ${s.enabled ? 'checked' : ''}><label for="tg-enabled">Ativar alertas no Telegram</label></div>
+    <div class="form-row"><label>Token do bot ${s.hasToken ? '<span class="muted">(já salvo — deixe em branco para manter)</span>' : ''}</label>
+      <input type="text" id="tg-token" placeholder="${s.hasToken ? '••••••••••••' : '123456:ABC-DEF...'}"></div>
+    <div class="form-row"><label>Chat ID (seu usuário, grupo ou canal)</label>
+      <input type="text" id="tg-chat" value="${esc(s.chatId || '')}" placeholder="ex.: 123456789 ou -100123..."></div>
+    <div class="form-row">
+      <label>Quais alertas enviar</label>
+      ${ALERTS.map(([k, lbl]) => `<label class="checkbox-row"><input type="checkbox" data-tg-alert="${k}" ${s.alerts[k] !== false ? 'checked' : ''}> ${lbl}</label>`).join('')}
+    </div>
+    <p class="muted">Crie um bot com o <b>@BotFather</b> (pega o token) e descubra seu Chat ID falando com o <b>@userinfobot</b> (ou adicione o bot ao grupo/canal e use o ID dele).</p>
+    <div class="modal-actions">
+      <button class="btn" id="tg-test">✉️ Enviar teste</button>
+      <button class="btn" id="modal-cancel">Fechar</button>
+      <button class="btn primary" id="tg-save">Salvar</button>
+    </div>`);
+  $('#modal-cancel').addEventListener('click', closeModal);
+  const body = () => ({
+    enabled: $('#tg-enabled').checked,
+    botToken: $('#tg-token').value,
+    chatId: $('#tg-chat').value,
+    alerts: Object.fromEntries([...$('#modal').querySelectorAll('[data-tg-alert]')].map((el) => [el.dataset.tgAlert, el.checked]))
+  });
+  $('#tg-test').addEventListener('click', async () => {
+    try {
+      await api('/settings/telegram/test', { method: 'POST', body: { botToken: $('#tg-token').value, chatId: $('#tg-chat').value } });
+      toast('Mensagem de teste enviada!');
+    } catch (err) { toast(err.message, true); }
+  });
+  $('#tg-save').addEventListener('click', async () => {
+    try {
+      await api('/settings/telegram', { method: 'PATCH', body: body() });
+      closeModal(); toast('Alertas salvos!');
+    } catch (err) { toast(err.message, true); }
+  });
+});
+
 /* ---------- tabs ---------- */
 
 let currentTab = 'dashboard';

@@ -20,6 +20,7 @@ Servidor RTMP com painel de gerência web. Permite:
 - **📜 Logs em tempo real** — veja a saída do FFmpeg de cada canal/relay no painel
 - **⚡ Normalização no upload** — vídeos são pré-convertidos uma única vez para um perfil uniforme; a transmissão usa cópia direta com CPU quase zero
 - **🩺 Watchdog e métricas** — velocidade do encoder por stream, carga de CPU/memória no dashboard e reinício automático de ffmpeg congelado
+- **🔔 Alertas no Telegram** — avisa quando um canal/relay cai (e quando volta), CPU alta, disco baixo ou encoder sem acompanhar o tempo real; configurável no painel com botão de teste
 - **⏯ Autostart e auto-restart** — canais marcados sobem junto com o servidor; se o FFmpeg cair, reinicia sozinho com backoff exponencial
 - **🔀 Modo aleatório** — embaralha a ordem da playlist a cada ciclo
 - **🔐 Login** — painel protegido por usuário/senha; publicações RTMP só são aceitas com chaves cadastradas
@@ -140,6 +141,7 @@ ffmpeg -i entrada.mp4 \
 | `BLOCK_GRACE_MAX_SEC` | `600` | Espera máxima pelo fim do programa atual na troca de bloco da grade |
 | `SCHEDULER_INTERVAL_SEC` | `20` | Frequência com que o agendador confere a grade |
 | `SEAMLESS_HORIZON_SEC` | `21600` | Horizonte pré-computado da transição sem corte (regenera ao fim) |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | *(vazio)* | Alertas no Telegram (ou configure no painel) |
 | `TZ` | *(do sistema)* | Fuso horário usado pela grade de programação |
 | `FFMPEG_THREADS` | *(auto)* | Limita threads do ffmpeg nos streams ao vivo |
 | `NORMALIZE_ENABLED` | `true` | Normalizar vídeos no upload |

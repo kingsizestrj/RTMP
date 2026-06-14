@@ -121,5 +121,11 @@ module.exports = {
   // começa alguns segundos atrás da borda ao vivo (o player do painel persegue
   // a borda sozinho). false = entra colado no ao vivo, porém espera o próximo
   // keyframe para exibir imagem.
-  GOP_CACHE: process.env.GOP_CACHE !== 'false'
+  GOP_CACHE: process.env.GOP_CACHE !== 'false',
+
+  // Alertas no Telegram (fallback/padrão; também configurável pelo painel).
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || '',
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || '',
+  // Base da API (configurável para testes/proxy)
+  TELEGRAM_API_BASE: process.env.TELEGRAM_API_BASE || 'https://api.telegram.org'
 };
