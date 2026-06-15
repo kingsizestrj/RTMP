@@ -222,6 +222,17 @@ function runJob(videoId) {
       }
       await setStatus(videoId, { status: 'ready', filename: path.basename(output), method, error: null });
       console.log(`[normalize] pronto: ${video.name}`);
+      // Política opcional: manter só o normalizado (apaga o original) se não
+      // for necessário a um canal copy/transcode.
+      try {
+        const cur = findVideo(videoId);
+        if (cur && (db.get().settings || {}).removeOriginals && !require('./usage').videosNeedingOriginal().has(videoId)) {
+          fs.unlink(input, () => {});
+          cur.originalRemoved = true;
+          await db.save();
+          console.log(`[normalize] original removido (política): ${video.name}`);
+        }
+      } catch {}
       resolve();
     });
   });

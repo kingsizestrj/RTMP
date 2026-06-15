@@ -245,8 +245,8 @@ $('#logout-btn').addEventListener('click', async () => {
 /* ---------- sistema (yt-dlp + disco) ---------- */
 
 async function openSystemModal() {
-  let st, yt;
-  try { [st, yt] = await Promise.all([api('/maintenance/storage'), api('/maintenance/ytdlp')]); }
+  let st, yt, cfg;
+  try { [st, yt, cfg] = await Promise.all([api('/maintenance/storage'), api('/maintenance/ytdlp'), api('/settings')]); }
   catch (err) { return toast(err.message, true); }
   const bar = (label, b) => `<div class="storage-row"><span>${label}</span><span class="muted">${fmtBytes(b.bytes)} · ${b.count} arquivo(s)</span></div>`;
   openModal(`
@@ -270,6 +270,10 @@ async function openSystemModal() {
       <button class="btn small" id="clean-orphans">🧹 Limpar arquivos órfãos</button>
     </div>
     <p class="muted">Cache: vídeos baixados do YouTube (rebaixados sob demanda). Órfãos: arquivos sem referência no acervo (não toca em vídeos em uso nem em downloads em curso).</p>
+    <h4 style="margin:14px 0 6px">Originais (economia de espaço)</h4>
+    <label class="checkbox-row"><input type="checkbox" id="rm-orig-auto" ${cfg.removeOriginals ? 'checked' : ''}> Manter só os normalizados (apagar o original ao terminar de normalizar)</label>
+    <div style="margin-top:8px"><button class="btn small" id="clean-originals">💾 Remover originais já normalizados</button></div>
+    <p class="muted">Libera espaço dos arquivos originais; os normalizados continuam tocando. Vídeos usados por canais em modo cópia/transcode são preservados. Sem o original não dá para dividir nem re-normalizar.</p>
     <div class="modal-actions"><button class="btn" id="modal-cancel">Fechar</button></div>`);
   $('#modal-cancel').addEventListener('click', closeModal);
   $('#yt-update').addEventListener('click', async () => {
@@ -288,6 +292,16 @@ async function openSystemModal() {
   $('#clean-orphans').addEventListener('click', async () => {
     const r = await api('/maintenance/clean-orphans', { method: 'POST' });
     toast(`Órfãos: ${r.count} arquivo(s), ${fmtBytes(r.bytes)} liberados`);
+    openSystemModal();
+  });
+  $('#rm-orig-auto').addEventListener('change', async (e) => {
+    try { await api('/settings/flags', { method: 'PATCH', body: { removeOriginals: e.target.checked } }); toast('Política salva.'); }
+    catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+  });
+  $('#clean-originals').addEventListener('click', async () => {
+    if (!confirm('Remover os originais de todos os vídeos já normalizados (e não usados por canais cópia/transcode)?')) return;
+    const r = await api('/videos/clean-originals', { method: 'POST' });
+    toast(`Originais removidos: ${r.count} vídeo(s), ${fmtBytes(r.freed)} liberados`);
     openSystemModal();
   });
 }
@@ -454,10 +468,12 @@ async function loadVideos() {
         <div class="item-head">
           <span class="item-title">🎬 ${esc(v.name)}</span>
           ${normBadge(v)}
+          ${v.originalRemoved ? '<span class="badge stopped" title="Apenas o arquivo normalizado foi mantido (original removido)">💾 só normalizado</span>' : ''}
           <span class="muted">${fmtBytes(v.size)} · ${fmtDuration(v.duration)}</span>
           <div class="item-actions">
-            ${(v.normalized || {}).status === 'error' ? `<button class="btn small" data-renorm-video="${v.id}">🔄 Tentar de novo</button>` : ''}
-            <button class="btn small" data-split-video="${v.id}" title="Dividir em partes/episódios">✂️</button>
+            ${(v.normalized || {}).status === 'error' && !v.originalRemoved ? `<button class="btn small" data-renorm-video="${v.id}">🔄 Tentar de novo</button>` : ''}
+            ${!v.originalRemoved ? `<button class="btn small" data-split-video="${v.id}" title="Dividir em partes/episódios">✂️</button>` : ''}
+            ${(v.normalized || {}).status === 'ready' && !v.originalRemoved ? `<button class="btn small" data-rmorig-video="${v.id}" title="Apagar o arquivo original e manter só o normalizado">💾</button>` : ''}
             <button class="btn small" data-rename-video="${v.id}" data-name="${esc(v.name)}">✏️</button>
             <button class="btn small danger" data-del-video="${v.id}">🗑️</button>
           </div>
@@ -1466,7 +1482,7 @@ function showPreview(key) {
 /* ---------- delegação de cliques ---------- */
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-edit-playlist],[data-del-playlist],[data-edit-campaign],[data-del-campaign],[data-rm-import],[data-clear-imports],[data-restream-channel],[data-rs-toggle],[data-rs-del],[data-regen-input],[data-del-input]');
+  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-rmorig-video],[data-edit-playlist],[data-del-playlist],[data-edit-campaign],[data-del-campaign],[data-rm-import],[data-clear-imports],[data-restream-channel],[data-rs-toggle],[data-rs-del],[data-regen-input],[data-del-input]');
   if (!t) return;
   const d = t.dataset;
   // Evita clique duplo disparar a mesma ação duas vezes (ex.: dois starts)
@@ -1518,6 +1534,14 @@ document.addEventListener('click', async (e) => {
       const videos = await api('/videos');
       const v = videos.find((x) => x.id === d.splitVideo);
       if (v) showSplitModal(v.id, v.name);
+    }
+    else if (d.rmorigVideo) {
+      if (confirm('Apagar o arquivo ORIGINAL e manter só o normalizado?\n\nIsso libera espaço, mas você não poderá mais dividir nem re-normalizar este vídeo.')) {
+        try {
+          const r = await api(`/videos/${d.rmorigVideo}/original`, { method: 'DELETE' });
+          toast(`Original removido (${fmtBytes(r.freed || 0)} liberados)`); loadVideos();
+        } catch (err) { toast(err.message, true); }
+      }
     }
     else if (d.editPlaylist) editPlaylist(d.editPlaylist);
     else if (d.delPlaylist) {

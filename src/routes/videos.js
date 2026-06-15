@@ -8,6 +8,7 @@ const config = require('../config');
 const db = require('../db');
 const normalizer = require('../normalizer');
 const importer = require('../importer');
+const usage = require('../usage');
 
 const router = express.Router();
 
@@ -105,7 +106,54 @@ router.post('/upload', upload.array('videos', 20), async (req, res) => {
 router.get('/:id/file', (req, res) => {
   const video = db.get().videos.find((v) => v.id === req.params.id);
   if (!video) return res.status(404).json({ error: 'Vídeo não encontrado' });
+  if (video.originalRemoved) return res.status(410).json({ error: 'Arquivo original removido' });
   res.sendFile(path.join(config.UPLOAD_DIR, video.filename));
+});
+
+// Remove o arquivo ORIGINAL mantendo só o normalizado (economiza disco).
+// Só permite se o vídeo estiver normalizado e não for usado por canal
+// copy/transcode (que lê o original).
+router.delete('/:id/original', async (req, res) => {
+  const state = db.get();
+  const video = state.videos.find((v) => v.id === req.params.id);
+  if (!video) return res.status(404).json({ error: 'Vídeo não encontrado' });
+  if (video.originalRemoved) return res.json({ ok: true, freed: 0 });
+  if (!video.normalized || video.normalized.status !== 'ready') {
+    return res.status(409).json({ error: 'O vídeo precisa estar normalizado antes de remover o original' });
+  }
+  if (usage.videosNeedingOriginal().has(video.id)) {
+    return res.status(409).json({ error: 'Original em uso por um canal em modo cópia/transcode — não pode ser removido' });
+  }
+  let freed = 0;
+  try {
+    const p = path.join(config.UPLOAD_DIR, video.filename);
+    freed = fs.existsSync(p) ? fs.statSync(p).size : 0;
+    fs.unlinkSync(p);
+  } catch {}
+  video.originalRemoved = true;
+  await db.save();
+  res.json({ ok: true, freed });
+});
+
+// Em lote: remove os originais de todos os vídeos já normalizados e que não
+// são necessários (não usados por canal copy/transcode).
+router.post('/clean-originals', async (req, res) => {
+  const state = db.get();
+  const need = usage.videosNeedingOriginal();
+  let count = 0; let freed = 0;
+  for (const v of state.videos) {
+    if (v.originalRemoved) continue;
+    if (!v.normalized || v.normalized.status !== 'ready') continue;
+    if (need.has(v.id)) continue;
+    try {
+      const p = path.join(config.UPLOAD_DIR, v.filename);
+      if (fs.existsSync(p)) { freed += fs.statSync(p).size; fs.unlinkSync(p); }
+    } catch {}
+    v.originalRemoved = true;
+    count += 1;
+  }
+  if (count) await db.save();
+  res.json({ ok: true, count, freed });
 });
 
 // Divisor de episódios: corta o vídeo nos pontos indicados (em segundos),
@@ -114,6 +162,7 @@ router.get('/:id/file', (req, res) => {
 router.post('/:id/split', (req, res) => {
   const video = db.get().videos.find((v) => v.id === req.params.id);
   if (!video) return res.status(404).json({ error: 'Vídeo não encontrado' });
+  if (video.originalRemoved) return res.status(409).json({ error: 'Original removido — não é possível dividir' });
 
   let cuts = Array.isArray(req.body && req.body.cuts) ? req.body.cuts : null;
   if (!cuts || cuts.length === 0 || cuts.length > 100) {
@@ -257,6 +306,7 @@ router.post('/slate', async (req, res) => {
 router.post('/:id/normalize', async (req, res) => {
   const video = db.get().videos.find((v) => v.id === req.params.id);
   if (!video) return res.status(404).json({ error: 'Vídeo não encontrado' });
+  if (video.originalRemoved) return res.status(409).json({ error: 'Original removido — não é possível re-normalizar (reenvie o vídeo)' });
   video.normalized = { status: 'pending' };
   await db.save();
   normalizer.renormalize(video.id);

@@ -31,8 +31,18 @@ router.get('/', (req, res) => {
   res.json({
     logo: fs.existsSync(config.LOGO_PATH),
     cookies: fs.existsSync(config.COOKIES_PATH),
+    removeOriginals: !!(db.get().settings || {}).removeOriginals,
     telegram: telegramView()
   });
+});
+
+// Política: manter só os normalizados (apaga o original ao terminar de normalizar).
+router.patch('/flags', async (req, res) => {
+  const state = db.get();
+  if (!state.settings) state.settings = {};
+  if (typeof (req.body || {}).removeOriginals === 'boolean') state.settings.removeOriginals = req.body.removeOriginals;
+  await db.save();
+  res.json({ removeOriginals: !!state.settings.removeOriginals });
 });
 
 // Importa os cookies do YouTube (arquivo cookies.txt no formato Netscape,
