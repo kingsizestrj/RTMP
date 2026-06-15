@@ -31,6 +31,7 @@ app.use('/api/channels', auth.requireAuth, require('./routes/channels'));
 app.use('/api/relays', auth.requireAuth, require('./routes/relays'));
 app.use('/api/inputs', auth.requireAuth, require('./routes/inputs'));
 app.use('/api/campaigns', auth.requireAuth, require('./routes/campaigns'));
+app.use('/api/restreams', auth.requireAuth, require('./routes/restreams'));
 app.use('/api/settings', auth.requireAuth, require('./routes/settings'));
 
 // As-run log (o que foi ao ar) + relatório de veiculação de comerciais

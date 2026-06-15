@@ -14,6 +14,7 @@ const DEFAULTS = {
   relays: [],    // { id, name, key, sourceUrl, ytdlp, mode, loop, autostart }
   inputs: [],    // { id, name, key, createdAt }  -> entradas ao vivo (OBS etc.)
   campaigns: [], // { id, name, videoId, start, end, channelIds[], enabled } -> comerciais
+  restreams: [], // { id, channelId, name, server, streamKey, enabled } -> multistream (YouTube etc.)
   settings: {}
 };
 

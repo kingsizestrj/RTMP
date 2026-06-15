@@ -709,6 +709,7 @@ async function loadChannels() {
                 : `<button class="btn small primary" data-start-channel="${c.id}">▶ Iniciar</button>`}
               <button class="btn small" data-preview="${esc(c.key)}">👁 Preview</button>
               <a class="btn small" href="watch.html?k=${esc(c.key)}&n=${encodeURIComponent(c.name)}" target="_blank">📺 Página</a>
+              <button class="btn small" data-restream-channel="${c.id}" data-name="${esc(c.name)}">📡 Multistream</button>
               <button class="btn small" data-edit-channel="${c.id}">⚙️ Editar</button>
               <button class="btn small" data-logs-channel="${c.id}">📜 Logs</button>
               <button class="btn small danger" data-del-channel="${c.id}">🗑️</button>
@@ -975,6 +976,60 @@ async function editChannel(id) {
       loadChannels();
     } catch (err) { toast(err.message, true); }
   });
+}
+
+/* ---------- multistream (YouTube) ---------- */
+
+function restreamStatus(rs) {
+  if (rs.status === 'running') return '<span class="badge running">🔴 TRANSMITINDO</span>';
+  if (['restarting', 'starting'].includes(rs.status)) return '<span class="badge restarting">conectando…</span>';
+  if (rs.status === 'error') return '<span class="badge error">erro</span>';
+  return `<span class="badge stopped">${rs.enabled ? 'aguardando canal' : 'desativado'}</span>`;
+}
+
+let restreamCtx = null;
+async function openRestreams(channelId, channelName) {
+  restreamCtx = { channelId, channelName };
+  const list = await api(`/restreams?channelId=${channelId}`);
+  openModal(`
+    <h3>📡 Multistream — ${esc(channelName)}</h3>
+    <p class="muted">Empurra este canal para o YouTube Live (e outros RTMP) em cópia direta. Liga sozinho quando o canal está no ar.</p>
+    <div id="rs-list" class="list">${list.length ? list.map(rsRow).join('') : '<p class="muted">Nenhum destino ainda.</p>'}</div>
+    <h4 style="margin:14px 0 6px">➕ Novo destino</h4>
+    <div class="form-row"><label>Nome</label><input type="text" id="rs-name" value="YouTube"></div>
+    <div class="form-row"><label>Chave de transmissão do YouTube <span class="muted">(YouTube Studio → Transmitir → Chave da transmissão)</span></label>
+      <input type="text" id="rs-key" placeholder="xxxx-xxxx-xxxx-xxxx"></div>
+    <div class="form-row"><label>Servidor RTMP <span class="muted">(padrão: YouTube)</span></label>
+      <input type="text" id="rs-server" value="rtmp://a.rtmp.youtube.com/live2"></div>
+    <div class="modal-actions">
+      <button class="btn" id="modal-cancel">Fechar</button>
+      <button class="btn primary" id="rs-add">Adicionar destino</button>
+    </div>`);
+  $('#modal-cancel').addEventListener('click', closeModal);
+  $('#rs-add').addEventListener('click', async () => {
+    const key = $('#rs-key').value.trim();
+    if (!key) return toast('Cole a chave de transmissão do YouTube', true);
+    try {
+      await api('/restreams', { method: 'POST', body: { channelId, name: $('#rs-name').value, server: $('#rs-server').value, streamKey: key } });
+      toast('Destino adicionado! Liga quando o canal estiver no ar.');
+      openRestreams(channelId, channelName);
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
+function rsRow(rs) {
+  return `<div class="item" style="padding:10px 14px">
+    <div class="item-head">
+      <span class="item-title">📡 ${esc(rs.name)}</span>
+      ${restreamStatus(rs)}
+      ${rs.status === 'running' && rs.stats && rs.stats.bitrate ? `<span class="muted">${esc(rs.stats.bitrate)}</span>` : ''}
+      <div class="item-actions">
+        <button class="btn small" data-rs-toggle="${rs.id}" data-on="${rs.enabled ? 1 : 0}">${rs.enabled ? '⏸ Desativar' : '▶ Ativar'}</button>
+        <button class="btn small danger" data-rs-del="${rs.id}">🗑️</button>
+      </div>
+    </div>
+    <div class="item-sub">${esc(rs.server)} · chave ••••${esc(String(rs.streamKey || '').slice(-4))}</div>
+  </div>`;
 }
 
 /* ---------- relays ---------- */
@@ -1358,7 +1413,7 @@ function showPreview(key) {
 /* ---------- delegação de cliques ---------- */
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-edit-playlist],[data-del-playlist],[data-edit-campaign],[data-del-campaign],[data-rm-import],[data-clear-imports],[data-regen-input],[data-del-input]');
+  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-edit-playlist],[data-del-playlist],[data-edit-campaign],[data-del-campaign],[data-rm-import],[data-clear-imports],[data-restream-channel],[data-rs-toggle],[data-rs-del],[data-regen-input],[data-del-input]');
   if (!t) return;
   const d = t.dataset;
   // Evita clique duplo disparar a mesma ação duas vezes (ex.: dois starts)
@@ -1425,6 +1480,17 @@ document.addEventListener('click', async (e) => {
     else if (d.clearImports != null) {
       await api('/videos/imports', { method: 'DELETE' });
       loadVideos();
+    }
+    else if (d.restreamChannel) openRestreams(d.restreamChannel, t.dataset.name);
+    else if (d.rsToggle) {
+      await api(`/restreams/${d.rsToggle}`, { method: 'PATCH', body: { enabled: d.on !== '1' } });
+      if (restreamCtx) openRestreams(restreamCtx.channelId, restreamCtx.channelName);
+    }
+    else if (d.rsDel) {
+      if (confirm('Remover este destino de multistream?')) {
+        await api(`/restreams/${d.rsDel}`, { method: 'DELETE' });
+        if (restreamCtx) openRestreams(restreamCtx.channelId, restreamCtx.channelName);
+      }
     }
     else if (d.editCampaign) openCampaign(d.editCampaign);
     else if (d.delCampaign) {

@@ -15,6 +15,7 @@ Servidor RTMP com painel de gerência web. Permite:
 - **🔁 Relays** — informe um link HTTP/HLS/RTMP/RTSP/SRT/UDP e ele é retransmitido como um novo link RTMP (com opção de loop para VOD)
 - **▶️ YouTube/Twitch** — cole o link de um vídeo ou live e o relay resolve a mídia real via yt-dlp automaticamente, renovando o link a cada reinício
 - **🎥 Entradas ao vivo** — gere chaves de stream para publicar do OBS/encoder e distribuir pelo link gerado
+- **📡 Multistream (YouTube)** — empurre qualquer canal para o YouTube Live (e outros RTMP) em cópia direta (CPU baixa); liga/desliga sozinho conforme o canal está no ar
 - **📱 HLS + página de player público** — cada canal tem um link `.m3u8` (roda em iPhone, SmartTV e navegador) e uma página `watch.html` pronta para compartilhar (HLS com fallback FLV)
 - **👁 Preview no navegador** — assista qualquer stream direto no painel (HTTP-FLV + flv.js)
 - **📜 Logs em tempo real** — veja a saída do FFmpeg de cada canal/relay no painel
@@ -86,6 +87,7 @@ O compose já inclui FFmpeg na imagem e persiste `data/` e `media/` em volumes.
    - Se o YouTube exigir login (idade/região) ou bloquear o IP do servidor ("Sign in to confirm...", "This video is not available"), **importe os cookies pelo painel**: no Firefox/Chrome instale a extensão "Get cookies.txt LOCALLY", abra o YouTube logado, exporte o `cookies.txt` e envie no botão **🍪 Cookies** dentro de *Baixar do YouTube* (ou em `./data/cookies.txt` / `YTDLP_COOKIES`). Mantenha o yt-dlp atualizado (rebuild da imagem). Para casos difíceis, `YTDLP_EXTRA_ARGS` troca o cliente de extração (ex.: `--extractor-args youtube:player_client=android,web`). Obs.: relay de live e download de vídeo são caminhos diferentes no YouTube — a live funcionar não garante que o download funcione.
 7. Para **transmitir ao vivo do OBS**, crie uma *Entrada*, configure o OBS com o servidor `rtmp://SEU_IP:1935/live` e a chave gerada.
 8. Para **veicular comerciais**, vá em *Comerciais → Nova campanha*: escolha o vídeo, a janela de datas e os canais. O anúncio entra nos intervalos (junto das vinhetas) enquanto a campanha estiver ativa. O botão *As-run / relatório* mostra o que foi ao ar e quantas vezes cada comercial foi inserido (com download do log completo).
+9. Para **transmitir um canal no YouTube** (multistream), abra **📡 Multistream** no card do canal, cole a **chave de transmissão** (YouTube Studio → *Transmitir* → *Chave da transmissão*) e ative. O envio (cópia direta) sobe automaticamente quando o canal está no ar e para quando ele sai. Dica: para evitar microcortes no YouTube nas viradas de grade, use o modo **✨ Transição sem corte** no canal (o canal só reinicia a cada ~6 h).
 
 ### Enviando vídeos já normalizados
 

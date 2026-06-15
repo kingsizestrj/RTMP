@@ -802,9 +802,9 @@ async function spawnStream(id, type, buildArgs, getItem) {
   if (Array.isArray(plan)) plan = { args: plan, helper: null };
   if (!plan) {
     entry.status = 'error';
-    pushLog(entry, item.mode === 'normalized'
-      ? 'Nenhum vídeo normalizado pronto — aguarde a normalização concluir (aba Vídeos).'
-      : 'Playlist vazia — adicione vídeos ao canal antes de iniciar.');
+    if (type === 'restream') pushLog(entry, 'Destino indisponível (canal ou chave ausente).');
+    else if (item.mode === 'normalized') pushLog(entry, 'Nenhum vídeo normalizado pronto — aguarde a normalização concluir (aba Vídeos).');
+    else pushLog(entry, 'Playlist vazia — adicione vídeos ao canal antes de iniciar.');
     return;
   }
   const args = plan.args;
@@ -896,6 +896,39 @@ function startRelay(relayId) {
   const getItem = () => db.get().relays.find((r) => r.id === relayId);
   if (!getItem()) throw new Error('Relay não encontrado');
   spawnStream(relayId, 'relay', buildRelayArgs, getItem);
+}
+
+// Multistream: empurra a saída de um canal para um RTMP externo (YouTube Live
+// etc.) em cópia direta (-c copy, CPU baixa). A fonte é o próprio canal local.
+function buildRestreamArgs(restream) {
+  const channel = db.get().channels.find((c) => c.id === restream.channelId);
+  if (!channel || !restream.streamKey) return null;
+  const server = (restream.server || 'rtmp://a.rtmp.youtube.com/live2').replace(/\/+$/, '');
+  const target = `${server}/${restream.streamKey}`;
+  return [
+    '-hide_banner', '-loglevel', 'warning', '-nostats', '-progress', 'pipe:1',
+    '-i', rtmpUrlFor(channel.key),
+    '-c', 'copy',
+    '-f', 'flv', target
+  ];
+}
+
+function startRestream(restreamId) {
+  const getItem = () => db.get().restreams.find((r) => r.id === restreamId);
+  if (!getItem()) return;
+  spawnStream(restreamId, 'restream', buildRestreamArgs, getItem);
+}
+
+// Reconciliador: cada multistream deve estar no ar sse estiver habilitado E o
+// canal de origem estiver no ar. Liga/desliga para casar com esse estado.
+function reconcileRestreams() {
+  const state = db.get();
+  for (const rs of state.restreams || []) {
+    const shouldRun = rs.enabled && isRunning(rs.channelId);
+    const managed = running.has(rs.id);
+    if (shouldRun && !managed) startRestream(rs.id);
+    else if (!shouldRun && managed) stop(rs.id);
+  }
 }
 
 function stop(id) {
@@ -1142,8 +1175,13 @@ function handleLiveEdge(key) {
 rtmpServer.events.on('publish', handleLiveEdge);
 rtmpServer.events.on('unpublish', handleLiveEdge);
 
+// Multistream: reage a publish/unpublish (canal subiu/caiu) e confere periodicamente.
+rtmpServer.events.on('publish', reconcileRestreams);
+rtmpServer.events.on('unpublish', reconcileRestreams);
+setInterval(reconcileRestreams, 5000);
+
 module.exports = {
   startChannel, startRelay, stop, restartIfRunning,
   statusOf, isRunning, autostartAll, shutdown, isYtdlpUrl, listChannelLives,
-  currentBlock, blockActiveAt, toMin
+  currentBlock, blockActiveAt, toMin, reconcileRestreams
 };
