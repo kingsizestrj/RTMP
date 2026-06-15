@@ -3,6 +3,7 @@
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
+const path = require('path');
 const config = require('../config');
 const db = require('../db');
 const notify = require('../notify');
@@ -27,7 +28,37 @@ function telegramView() {
 }
 
 router.get('/', (req, res) => {
-  res.json({ logo: fs.existsSync(config.LOGO_PATH), telegram: telegramView() });
+  res.json({
+    logo: fs.existsSync(config.LOGO_PATH),
+    cookies: fs.existsSync(config.COOKIES_PATH),
+    telegram: telegramView()
+  });
+});
+
+// Importa os cookies do YouTube (arquivo cookies.txt no formato Netscape,
+// exportado do navegador). Usado pelo yt-dlp em imports e relays.
+router.post('/cookies', upload.single('cookies'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Envie o arquivo cookies.txt' });
+  if (req.file.size > 2 * 1024 * 1024) return res.status(400).json({ error: 'Arquivo muito grande' });
+  const text = req.file.buffer.toString('utf8');
+  // Netscape cookie file: cabeçalho conhecido OU linhas com 7 campos por tab.
+  const looksNetscape = /Netscape HTTP Cookie File|# HTTP Cookie File/i.test(text) ||
+    text.split('\n').some((l) => !l.startsWith('#') && l.split('\t').length >= 7);
+  if (!looksNetscape) {
+    return res.status(400).json({ error: 'Não parece um cookies.txt (formato Netscape). Exporte com a extensão "Get cookies.txt".' });
+  }
+  try {
+    fs.mkdirSync(path.dirname(config.COOKIES_PATH), { recursive: true });
+    fs.writeFileSync(config.COOKIES_PATH, req.file.buffer, { mode: 0o600 });
+  } catch (err) {
+    return res.status(500).json({ error: 'Falha ao salvar: ' + err.message });
+  }
+  res.json({ ok: true, cookies: true });
+});
+
+router.delete('/cookies', (req, res) => {
+  fs.unlink(config.COOKIES_PATH, () => {});
+  res.json({ ok: true, cookies: false });
 });
 
 // Salva a configuração de alertas do Telegram. O token só é gravado quando

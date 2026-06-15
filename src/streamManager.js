@@ -468,7 +468,7 @@ function isYtdlpUrl(url) {
 // Flags comuns a toda chamada do yt-dlp.
 function ytdlpBaseArgs() {
   const args = ['--no-playlist', '--no-warnings', '--socket-timeout', '30'];
-  if (config.YTDLP_COOKIES) args.push('--cookies', config.YTDLP_COOKIES);
+  if (fs.existsSync(config.COOKIES_PATH)) args.push('--cookies', config.COOKIES_PATH);
   if (config.YTDLP_JS_RUNTIME) args.push('--js-runtimes', config.YTDLP_JS_RUNTIME);
   args.push(...config.YTDLP_EXTRA_ARGS);
   return args;
@@ -536,7 +536,7 @@ async function listChannelLives(sourceUrl) {
   const channelUrl = await resolveChannelUrl(sourceUrl);
   return new Promise((resolve, reject) => {
     const args = ['--no-warnings', '--socket-timeout', '30'];
-    if (config.YTDLP_COOKIES) args.push('--cookies', config.YTDLP_COOKIES);
+    if (fs.existsSync(config.COOKIES_PATH)) args.push('--cookies', config.COOKIES_PATH);
     if (config.YTDLP_JS_RUNTIME) args.push('--js-runtimes', config.YTDLP_JS_RUNTIME);
     args.push(...config.YTDLP_EXTRA_ARGS);
     args.push(

@@ -449,19 +449,56 @@ function uploadFiles(files) {
 
 $('#upload-input').addEventListener('change', (e) => { uploadFiles(e.target.files); e.target.value = ''; });
 
-$('#yt-btn').addEventListener('click', () => {
+// Status dos cookies para os modais (atualizado ao abrir).
+function cookiesRowHtml(has) {
+  return `<div class="form-row" id="yt-cookies-row">
+    <label>🍪 Cookies do YouTube ${has ? '<span class="muted">(enviado ✓)</span>' : '<span style="color:var(--yellow)">(nenhum)</span>'}</label>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+      <label class="btn small">⬆️ Enviar cookies.txt<input type="file" id="yt-cookies-file" accept=".txt" hidden></label>
+      ${has ? '<button type="button" class="btn small danger" id="yt-cookies-del">Remover</button>' : ''}
+      <span class="muted">necessário para vídeos com login/idade ou IP bloqueado</span>
+    </div>
+    <p class="muted">No Firefox: instale a extensão <b>"Get cookies.txt LOCALLY"</b>, abra o YouTube logado, clique na extensão → <i>Export</i>, e envie o arquivo aqui.</p>
+  </div>`;
+}
+
+function wireCookies(reopen) {
+  const fileEl = $('#yt-cookies-file');
+  if (fileEl) fileEl.addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append('cookies', f);
+    try {
+      await api('/settings/cookies', { method: 'POST', body: fd });
+      toast('Cookies importados!');
+      reopen();
+    } catch (err) { toast(err.message, true); }
+  });
+  const delEl = $('#yt-cookies-del');
+  if (delEl) delEl.addEventListener('click', async () => {
+    try { await api('/settings/cookies', { method: 'DELETE' }); toast('Cookies removidos.'); reopen(); }
+    catch (err) { toast(err.message, true); }
+  });
+}
+
+async function openYouTubeModal() {
+  let cookies = false;
+  try { cookies = (await api('/settings')).cookies; } catch {}
   openModal(`
     <h3>⬇️ Baixar do YouTube</h3>
     <div class="form-row"><label>URL do vídeo ou da playlist</label>
       <input type="text" id="yt-url" placeholder="https://www.youtube.com/watch?v=..."></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="yt-chapters"><label for="yt-chapters">✂️ Dividir em episódios pelos capítulos do vídeo (quando houver)</label></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="yt-playlist"><label for="yt-playlist">📃 Baixar a playlist inteira (um vídeo de cada vez)</label></div>
+    ${cookiesRowHtml(cookies)}
     <p class="muted">Os vídeos baixados entram na normalização automaticamente. Baixe apenas conteúdo que você tem direito de usar.</p>
     <div class="modal-actions">
       <button class="btn" id="modal-cancel">Cancelar</button>
       <button class="btn primary" id="yt-go">Baixar</button>
     </div>`);
   $('#modal-cancel').addEventListener('click', closeModal);
+  wireCookies(openYouTubeModal);
   $('#yt-go').addEventListener('click', async () => {
     const url = $('#yt-url').value.trim();
     if (!url) return toast('Cole a URL', true);
@@ -472,7 +509,9 @@ $('#yt-btn').addEventListener('click', () => {
       loadVideos();
     } catch (err) { toast(err.message, true); }
   });
-});
+}
+
+$('#yt-btn').addEventListener('click', openYouTubeModal);
 
 $('#slate-btn').addEventListener('click', async () => {
   const text = prompt('Texto do cartão de espera:', 'JÁ VOLTAMOS');

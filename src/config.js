@@ -45,8 +45,10 @@ module.exports = {
   // Lives são enviadas por pipe (sem merge), então o formato deve ser único
   YTDLP_LIVE_FORMAT: process.env.YTDLP_LIVE_FORMAT || 'b',
   // Arquivo de cookies (formato Netscape) para o yt-dlp — necessário quando o
-  // YouTube bloqueia o IP do servidor (comum em VPS/datacenter)
+  // YouTube exige login (idade/região) ou bloqueia o IP. Pode ser enviado pelo
+  // painel (gravado em data/cookies.txt) ou apontado por YTDLP_COOKIES.
   YTDLP_COOKIES: process.env.YTDLP_COOKIES || '',
+  COOKIES_PATH: process.env.YTDLP_COOKIES || path.join(process.env.DATA_DIR || path.join(ROOT, 'data'), 'cookies.txt'),
   // Argumentos extras aplicados a TODA chamada do yt-dlp (import + relays).
   // Válvula de escape para contornar bloqueios sem mexer no código, ex.:
   //   YTDLP_EXTRA_ARGS=--extractor-args youtube:player_client=android,web
