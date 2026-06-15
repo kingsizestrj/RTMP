@@ -589,6 +589,14 @@ async function openYouTubeModal() {
     <h3>⬇️ Baixar do YouTube</h3>
     <div class="form-row"><label>URL do vídeo ou da playlist</label>
       <input type="text" id="yt-url" placeholder="https://www.youtube.com/watch?v=..."></div>
+    <div class="form-row">
+      <label>Resolução <span class="muted">— baixar na resolução do perfil pula a normalização</span></label>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+        <select id="yt-res"><option value="0">Melhor (até 1080p)</option></select>
+        <button type="button" class="btn small" id="yt-res-find">🔎 Buscar resoluções</button>
+        <span id="yt-res-info" class="muted"></span>
+      </div>
+    </div>
     <div class="form-row checkbox-row"><input type="checkbox" id="yt-chapters"><label for="yt-chapters">✂️ Dividir em episódios pelos capítulos do vídeo (quando houver)</label></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="yt-playlist"><label for="yt-playlist">📃 Baixar a playlist inteira (um vídeo de cada vez)</label></div>
     ${cookiesRowHtml(cookies, s.ytdlpExtraArgs)}
@@ -599,11 +607,39 @@ async function openYouTubeModal() {
     </div>`);
   $('#modal-cancel').addEventListener('click', closeModal);
   wireCookies(openYouTubeModal);
+
+  // Busca as resoluções disponíveis e preenche o seletor.
+  let lastFetched = '';
+  async function findResolutions() {
+    const url = $('#yt-url').value.trim();
+    if (!url || url === lastFetched) return;
+    lastFetched = url;
+    const info = $('#yt-res-info');
+    const sel = $('#yt-res');
+    info.textContent = 'buscando…';
+    try {
+      const r = await api('/videos/formats', { method: 'POST', body: { url } });
+      const opts = ['<option value="0">Melhor (até 1080p)</option>']
+        .concat((r.heights || []).map((h) => `<option value="${h}">${h}p</option>`));
+      sel.innerHTML = opts.join('');
+      // pré-seleciona 720p se existir (combina com o perfil padrão)
+      if ((r.heights || []).includes(720)) sel.value = '720';
+      info.textContent = r.heights && r.heights.length ? `disponíveis: ${r.heights.map((h) => h + 'p').join(', ')}` : 'nenhuma resolução listada';
+    } catch (err) { info.textContent = 'erro: ' + err.message; lastFetched = ''; }
+  }
+  $('#yt-url').addEventListener('change', findResolutions); // dispara ao colar e sair do campo
+  $('#yt-res-find').addEventListener('click', () => { lastFetched = ''; findResolutions(); });
+
   $('#yt-go').addEventListener('click', async () => {
     const url = $('#yt-url').value.trim();
     if (!url) return toast('Cole a URL', true);
     try {
-      await api('/videos/import', { method: 'POST', body: { url, splitChapters: $('#yt-chapters').checked, playlist: $('#yt-playlist').checked } });
+      await api('/videos/import', { method: 'POST', body: {
+        url,
+        splitChapters: $('#yt-chapters').checked,
+        playlist: $('#yt-playlist').checked,
+        height: parseInt($('#yt-res').value, 10) || 0
+      } });
       closeModal();
       toast('Importação iniciada — acompanhe acima da lista de vídeos.');
       loadVideos();

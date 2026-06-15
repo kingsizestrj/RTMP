@@ -21,14 +21,15 @@ function baseArgs() {
   const a = ['--no-warnings', '--socket-timeout', '30'];
   if (fs.existsSync(config.COOKIES_PATH)) a.push('--cookies', config.COOKIES_PATH);
   if (config.YTDLP_JS_RUNTIME) a.push('--js-runtimes', config.YTDLP_JS_RUNTIME);
-  a.push(...require('../ytdlpopts').extraArgs());
+  a.push(...require('./ytdlpopts').extraArgs());
   return a;
 }
 
-function newJob(url, splitChapters) {
+function newJob(url, splitChapters, height) {
   const j = {
     id: db.id(), url, title: url, status: 'queued', progress: 0,
-    message: '', parts: 0, splitChapters: !!splitChapters, createdAt: new Date().toISOString()
+    message: '', parts: 0, splitChapters: !!splitChapters, height: parseInt(height, 10) || 0,
+    createdAt: new Date().toISOString()
   };
   jobs.push(j);
   while (jobs.length > MAX_JOBS) jobs.shift();
@@ -37,6 +38,32 @@ function newJob(url, splitChapters) {
 
 function list() {
   return jobs.slice(-30).reverse();
+}
+
+// Seletor de formato: altura específica (baixar já no tamanho do perfil pode
+// pular a normalização) ou o padrão (melhor H.264 até 1080p).
+function formatForHeight(h) {
+  if (!h || h <= 0) return config.YTDLP_FORMAT;
+  return `bv*[vcodec^=avc1][height<=${h}]+ba[acodec^=mp4a]/b[vcodec^=avc1][height<=${h}]/b[height<=${h}]/b`;
+}
+
+// Lista as resoluções (alturas) disponíveis para a URL, via metadados do yt-dlp.
+function listFormats(url) {
+  return new Promise((resolve, reject) => {
+    execFile(config.YTDLP_PATH, [...baseArgs(), '--no-playlist', '-J', url],
+      { timeout: 60000, maxBuffer: 32 * 1024 * 1024 }, (err, out, stderr) => {
+        if (err) return reject(new Error((stderr || err.message).trim().split('\n').filter(Boolean).pop() || 'falha ao consultar'));
+        let info;
+        try { info = JSON.parse(out); } catch { return reject(new Error('resposta inválida do yt-dlp')); }
+        const heights = new Set();
+        for (const f of info.formats || []) {
+          if (f.height && f.vcodec && f.vcodec !== 'none') heights.add(f.height);
+        }
+        if (info.height) heights.add(info.height);
+        const list = [...heights].filter((h) => h >= 144).sort((a, b) => b - a);
+        resolve({ title: info.title || '', heights: list });
+      });
+  });
 }
 
 function probeDuration(file) {
@@ -81,7 +108,7 @@ function download(job, url, outFile) {
     try {
       proc = spawn(config.YTDLP_PATH, [
         ...baseArgs(), '--no-playlist', '--newline',
-        '-f', config.YTDLP_FORMAT, '--merge-output-format', 'mp4',
+        '-f', formatForHeight(job.height), '--merge-output-format', 'mp4',
         '-o', outFile, url
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) { return reject(new Error(err.message)); }
@@ -207,12 +234,12 @@ function pump() {
 
 // Enfileira uma importação. Se playlist=true, lista os vídeos e cria um job por
 // vídeo (cada um respeitando splitChapters). Devolve o job inicial.
-function enqueue({ url, splitChapters, playlist }) {
+function enqueue({ url, splitChapters, playlist, height }) {
   url = String(url || '').trim();
   if (!/^https?:\/\//i.test(url)) throw new Error('URL inválida (use http/https)');
 
   if (playlist) {
-    const parent = newJob(url, splitChapters);
+    const parent = newJob(url, splitChapters, height);
     parent.status = 'downloading';
     parent.message = 'lendo a playlist...';
     enumeratePlaylist(url).then((urls) => {
@@ -221,13 +248,13 @@ function enqueue({ url, splitChapters, playlist }) {
       parent.title = `Playlist (${urls.length} vídeos)`;
       parent.message = `${urls.length} vídeos enfileirados`;
       parent.parts = urls.length;
-      for (const u of urls) queue.push(newJob(u, splitChapters));
+      for (const u of urls) queue.push(newJob(u, splitChapters, height));
       pump();
     }).catch((e) => { parent.status = 'error'; parent.message = e.message; });
     return parent;
   }
 
-  const job = newJob(url, splitChapters);
+  const job = newJob(url, splitChapters, height);
   queue.push(job);
   pump();
   return job;
@@ -256,4 +283,4 @@ function clearFinished() {
   }
 }
 
-module.exports = { enqueue, list, remove, clearFinished };
+module.exports = { enqueue, list, remove, clearFinished, listFormats };

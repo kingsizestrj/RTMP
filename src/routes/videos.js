@@ -67,6 +67,17 @@ router.get('/imports', (req, res) => {
   res.json(importer.list());
 });
 
+// Lista as resoluções disponíveis para uma URL do YouTube.
+router.post('/formats', async (req, res) => {
+  const url = String((req.body || {}).url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'URL inválida' });
+  try {
+    res.json(await importer.listFormats(url));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // Limpa as importações concluídas/com erro da lista.
 router.delete('/imports', (req, res) => {
   importer.clearFinished();
