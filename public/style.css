@@ -212,6 +212,9 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 
 .error-msg { color: var(--red); font-size: 13px; text-align: center; min-height: 16px; }
 
+/* Armazenamento (sistema) */
+.storage-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+
 /* As-run / relatório */
 .asrun-rep { width: 100%; border-collapse: collapse; font-size: 13px; }
 .asrun-rep th, .asrun-rep td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }

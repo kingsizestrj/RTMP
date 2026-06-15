@@ -22,6 +22,7 @@ Servidor RTMP com painel de gerência web. Permite:
 - **⚡ Normalização no upload** — vídeos são pré-convertidos uma única vez para um perfil uniforme; a transmissão usa cópia direta com CPU quase zero
 - **🩺 Watchdog e métricas** — velocidade do encoder por stream, carga de CPU/memória no dashboard e reinício automático de ffmpeg congelado
 - **🔔 Alertas no Telegram** — avisa quando um canal/relay cai (e quando volta), CPU alta, disco baixo ou encoder sem acompanhar o tempo real; configurável no painel com botão de teste
+- **🛠 Sistema** — auto-update do yt-dlp (no boot + diário, ou manual no painel) e gestão de disco (uso por pasta, limpar cache do YouTube e arquivos órfãos com segurança)
 - **⏯ Autostart e auto-restart** — canais marcados sobem junto com o servidor; se o FFmpeg cair, reinicia sozinho com backoff exponencial
 - **🔀 Modo aleatório** — embaralha a ordem da playlist a cada ciclo
 - **🔐 Login** — painel protegido por usuário/senha; publicações RTMP só são aceitas com chaves cadastradas

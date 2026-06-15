@@ -40,6 +40,8 @@ services:
       YTDLP_COOKIES: ${YTDLP_COOKIES:-}
       YTDLP_JS_RUNTIME: ${YTDLP_JS_RUNTIME:-node}
       YTDLP_EXTRA_ARGS: ${YTDLP_EXTRA_ARGS:-}
+      YTDLP_AUTO_UPDATE: ${YTDLP_AUTO_UPDATE:-true}
+      YTDLP_UPDATE_INTERVAL_HOURS: ${YTDLP_UPDATE_INTERVAL_HOURS:-24}
     volumes:
       - ./data:/app/data
       - ./media:/app/media

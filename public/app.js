@@ -242,6 +242,57 @@ $('#logout-btn').addEventListener('click', async () => {
   showLogin();
 });
 
+/* ---------- sistema (yt-dlp + disco) ---------- */
+
+async function openSystemModal() {
+  let st, yt;
+  try { [st, yt] = await Promise.all([api('/maintenance/storage'), api('/maintenance/ytdlp')]); }
+  catch (err) { return toast(err.message, true); }
+  const bar = (label, b) => `<div class="storage-row"><span>${label}</span><span class="muted">${fmtBytes(b.bytes)} · ${b.count} arquivo(s)</span></div>`;
+  openModal(`
+    <h3>🛠 Sistema</h3>
+    <h4 style="margin:6px 0">yt-dlp</h4>
+    <div class="item" style="padding:10px 14px">
+      <div class="item-head">
+        <span>Versão: <b id="yt-ver">${esc(yt.version || '—')}</b> ${yt.auto ? '<span class="muted">(auto-update diário)</span>' : ''}</span>
+        <button class="btn small primary" id="yt-update" style="margin-left:auto">⬆️ Atualizar agora</button>
+      </div>
+      ${yt.lastResult ? `<div class="item-sub">Última: ${esc(yt.lastResult)}</div>` : ''}
+    </div>
+    <h4 style="margin:14px 0 6px">Disco — ${st.disk.usedPct}% usado · ${fmtBytes(st.disk.freeBytes)} livres de ${fmtBytes(st.disk.totalBytes)}</h4>
+    <div class="storage">
+      ${bar('🎬 Originais (uploads)', st.uploads)}
+      ${bar('⚡ Normalizados', st.normalized)}
+      ${bar('📥 Cache do YouTube', st.cache)}
+    </div>
+    <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap">
+      <button class="btn small" id="clean-cache">🧹 Limpar cache do YouTube</button>
+      <button class="btn small" id="clean-orphans">🧹 Limpar arquivos órfãos</button>
+    </div>
+    <p class="muted">Cache: vídeos baixados do YouTube (rebaixados sob demanda). Órfãos: arquivos sem referência no acervo (não toca em vídeos em uso nem em downloads em curso).</p>
+    <div class="modal-actions"><button class="btn" id="modal-cancel">Fechar</button></div>`);
+  $('#modal-cancel').addEventListener('click', closeModal);
+  $('#yt-update').addEventListener('click', async () => {
+    const btn = $('#yt-update'); btn.disabled = true; btn.textContent = 'Atualizando…';
+    try {
+      const r = await api('/maintenance/ytdlp-update', { method: 'POST' });
+      toast(r.ok ? `yt-dlp: ${r.message}` : r.message, !r.ok);
+      openSystemModal();
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
+  });
+  $('#clean-cache').addEventListener('click', async () => {
+    const r = await api('/maintenance/clean-cache', { method: 'POST' });
+    toast(`Cache limpo: ${r.count} arquivo(s), ${fmtBytes(r.bytes)} liberados`);
+    openSystemModal();
+  });
+  $('#clean-orphans').addEventListener('click', async () => {
+    const r = await api('/maintenance/clean-orphans', { method: 'POST' });
+    toast(`Órfãos: ${r.count} arquivo(s), ${fmtBytes(r.bytes)} liberados`);
+    openSystemModal();
+  });
+}
+$('#sys-btn').addEventListener('click', openSystemModal);
+
 /* ---------- alertas (Telegram) ---------- */
 
 $('#alerts-btn').addEventListener('click', async () => {
@@ -329,6 +380,8 @@ async function loadDashboard() {
     <div class="card"><div class="num" ${loadWarn ? 'style="color:var(--red)"' : ''}>${loadPct}%</div>
       <div class="label">CPU (${(st.server.load || 0).toFixed(1)} / ${st.server.cpus} núcleos)${loadWarn ? ' ⚠️' : ''}</div></div>
     <div class="card"><div class="num">${st.server.memUsedPct}%</div><div class="label">Memória</div></div>
+    ${st.server.disk && st.server.disk.totalBytes ? `<div class="card"><div class="num" ${st.server.disk.usedPct >= 90 ? 'style="color:var(--red)"' : ''}>${st.server.disk.usedPct}%</div>
+      <div class="label">Disco (${fmtBytes(st.server.disk.freeBytes)} livres)</div></div>` : ''}
     <div class="card"><div class="num">${fmtDuration(st.server.uptime)}</div><div class="label">Uptime do servidor</div></div>`;
 
   $('#live-list').innerHTML = st.live.length === 0

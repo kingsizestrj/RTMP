@@ -8,6 +8,7 @@ const auth = require('./auth');
 const rtmpServer = require('./rtmpServer');
 const sm = require('./streamManager');
 const normalizer = require('./normalizer');
+const maintenance = require('./maintenance');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
 fs.mkdirSync(config.UPLOAD_DIR, { recursive: true });
@@ -33,6 +34,7 @@ app.use('/api/inputs', auth.requireAuth, require('./routes/inputs'));
 app.use('/api/campaigns', auth.requireAuth, require('./routes/campaigns'));
 app.use('/api/restreams', auth.requireAuth, require('./routes/restreams'));
 app.use('/api/settings', auth.requireAuth, require('./routes/settings'));
+app.use('/api/maintenance', auth.requireAuth, require('./routes/maintenance'));
 
 // As-run log (o que foi ao ar) + relatório de veiculação de comerciais
 const asrun = require('./asrun');
@@ -101,7 +103,9 @@ app.get('/api/status', auth.requireAuth, (req, res) => {
       uptime: Math.round(process.uptime()),
       load: os.loadavg()[0],
       cpus: os.cpus().length,
-      memUsedPct: Math.round((1 - os.freemem() / os.totalmem()) * 100)
+      memUsedPct: Math.round((1 - os.freemem() / os.totalmem()) * 100),
+      disk: maintenance.diskInfo(),
+      ytdlp: maintenance.ytdlpInfo().version
     }
   });
 });
@@ -125,6 +129,9 @@ normalizer.bootstrap();
 
 // Monitor de saúde + alertas no Telegram
 require('./monitor').start();
+
+// Manutenção: auto-update do yt-dlp + limpeza de órfãos
+maintenance.start();
 
 function gracefulExit() {
   console.log('Encerrando streams...');

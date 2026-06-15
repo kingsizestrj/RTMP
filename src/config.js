@@ -37,6 +37,9 @@ module.exports = {
   FFMPEG_PATH: process.env.FFMPEG_PATH || 'ffmpeg',
   FFPROBE_PATH: process.env.FFPROBE_PATH || 'ffprobe',
   YTDLP_PATH: process.env.YTDLP_PATH || 'yt-dlp',
+  // Auto-atualização do yt-dlp (o YouTube quebra os extratores com frequência).
+  YTDLP_AUTO_UPDATE: process.env.YTDLP_AUTO_UPDATE !== 'false',
+  YTDLP_UPDATE_INTERVAL_HOURS: parseInt(process.env.YTDLP_UPDATE_INTERVAL_HOURS || '24', 10),
 
   // Seleção de formato do yt-dlp: prioriza H.264+AAC até 1080p para que o
   // modo "cópia direta" funcione sem transcodificar (FLV exige H.264/AAC).
