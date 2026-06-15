@@ -280,22 +280,35 @@ function Show-YouTubeDialog {
     $lr.Text = 'Resolucao:'; $lr.Location = New-Object System.Drawing.Point(12, 120); $lr.AutoSize = $true; $f.Controls.Add($lr)
     $cmb = New-Object System.Windows.Forms.ComboBox
     $cmb.DropDownStyle = 'DropDownList'; $cmb.Location = New-Object System.Drawing.Point(90, 117); $cmb.Width = 150
-    [void]$cmb.Items.AddRange(@('Melhor (ate 1080p)', '1080p', '720p', '480p', '360p')); $cmb.SelectedIndex = 2; $f.Controls.Add($cmb)
+    [void]$cmb.Items.Add('Melhor (ate 1080p)'); $cmb.SelectedIndex = 0; $f.Controls.Add($cmb)
     $btnList = New-Object System.Windows.Forms.Button
-    $btnList.Text = 'Listar resolucoes'; $btnList.Location = New-Object System.Drawing.Point(250, 116); $btnList.Width = 130; $f.Controls.Add($btnList)
+    $btnList.Text = 'Atualizar'; $btnList.Location = New-Object System.Drawing.Point(250, 116); $btnList.Width = 90; $f.Controls.Add($btnList)
     $lblRes = New-Object System.Windows.Forms.Label
     $lblRes.Location = New-Object System.Drawing.Point(12, 150); $lblRes.Size = New-Object System.Drawing.Size(510, 60); $lblRes.ForeColor = [System.Drawing.Color]::DimGray; $f.Controls.Add($lblRes)
 
-    $btnList.Add_Click({
+    # Busca as resolucoes e preenche o seletor. Roda sozinho ao sair do campo
+    # da URL (colou o link -> ja busca) e no botao Atualizar.
+    $state = @{ Last = '' }
+    $fetch = {
         $u = $t.Text.Trim()
-        if (-not $u) { $lblRes.Text = 'Cole a URL primeiro.'; return }
-        $lblRes.Text = 'Consultando...'; $f.Refresh()
+        if (-not $u -or $u -eq $state.Last) { return }
+        $state.Last = $u
+        $lblRes.Text = 'Consultando resolucoes...'; $f.Refresh()
         try {
             $out = & $script:Ytdlp (Get-YtdlpListArgs $u $cbC.Checked) 2>&1 | Out-String
             $res = Parse-Resolutions $out
-            $lblRes.Text = if ($res.Count) { 'Disponiveis: ' + ($res -join ', ') } else { 'Nao consegui listar (confira a URL/cookies).' }
-        } catch { $lblRes.Text = "Erro: $($_.Exception.Message)" }
-    })
+            $prev = [string]$cmb.SelectedItem
+            $cmb.Items.Clear()
+            [void]$cmb.Items.Add('Melhor (ate 1080p)')
+            foreach ($r in $res) { [void]$cmb.Items.Add($r) }
+            if ($cmb.Items.Contains('720p')) { $cmb.SelectedItem = '720p' }
+            elseif ($cmb.Items.Contains($prev)) { $cmb.SelectedItem = $prev }
+            else { $cmb.SelectedIndex = 0 }
+            if ($res.Count) { $lblRes.Text = 'Disponiveis: ' + ($res -join ', ') } else { $lblRes.Text = 'Nao consegui listar (confira URL/cookies).' }
+        } catch { $lblRes.Text = "Erro: $($_.Exception.Message)"; $state.Last = '' }
+    }
+    $t.Add_Leave($fetch)
+    $btnList.Add_Click({ $state.Last = ''; & $fetch })
 
     $ok = New-Object System.Windows.Forms.Button
     $ok.Text = 'Baixar'; $ok.Location = New-Object System.Drawing.Point(336, 240); $ok.Width = 90; $ok.DialogResult = 'OK'; $f.Controls.Add($ok); $f.AcceptButton = $ok
@@ -305,8 +318,10 @@ function Show-YouTubeDialog {
     if ($f.ShowDialog() -ne 'OK') { return $null }
     $u = $t.Text.Trim()
     if (-not $u) { return $null }
-    $heights = @{ 'Melhor (ate 1080p)' = 0; '1080p' = 1080; '720p' = 720; '480p' = 480; '360p' = 360 }
-    return @{ Url = $u; Cookies = $cbC.Checked; Playlist = $cbP.Checked; Height = [int]$heights[[string]$cmb.SelectedItem] }
+    $selText = [string]$cmb.SelectedItem
+    $h = 0
+    if ($selText -match '^(\d+)p$') { $h = [int]$Matches[1] }
+    return @{ Url = $u; Cookies = $cbC.Checked; Playlist = $cbP.Checked; Height = $h }
 }
 
 # Le o progresso (%) do log do yt-dlp mesmo com o arquivo aberto.
