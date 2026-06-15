@@ -14,6 +14,11 @@ const router = express.Router();
 
 const ALLOWED_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.flv', '.ts', '.m4v', '.webm']);
 
+// Nome de pasta (rótulo de organização): apara, tira barras e limita o tamanho.
+function sanitizeFolder(s) {
+  return String(s || '').replace(/[\\/]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, config.UPLOAD_DIR),
   filename: (req, file, cb) => {
@@ -54,9 +59,9 @@ router.get('/', (req, res) => {
 
 // Importar do YouTube (vídeo ou playlist), opcionalmente cortando por capítulos.
 router.post('/import', (req, res) => {
-  const { url, splitChapters, playlist } = req.body || {};
+  const { url, splitChapters, playlist, height, folder } = req.body || {};
   try {
-    const job = importer.enqueue({ url, splitChapters: !!splitChapters, playlist: !!playlist });
+    const job = importer.enqueue({ url, splitChapters: !!splitChapters, playlist: !!playlist, height, folder: sanitizeFolder(folder) });
     res.json({ ok: true, job });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -92,12 +97,14 @@ router.delete('/imports/:id', (req, res) => {
 
 router.post('/upload', upload.array('videos', 20), async (req, res) => {
   const state = db.get();
+  const folder = sanitizeFolder((req.body || {}).folder);
   const added = [];
   for (const file of req.files || []) {
     const duration = await probeDuration(file.path);
     const video = {
       id: path.parse(file.filename).name,
       name: Buffer.from(file.originalname, 'latin1').toString('utf8'),
+      folder,
       filename: file.filename,
       size: file.size,
       duration: duration != null ? Math.round(duration) : null,
@@ -228,6 +235,7 @@ async function splitJob(video, segments) {
     state.videos.push({
       id: newId,
       name: `${video.name} (parte ${part})`,
+      folder: video.folder || '',
       filename,
       size: fs.statSync(out).size,
       duration: duration != null ? Math.round(duration) : null,
@@ -300,6 +308,7 @@ router.post('/slate', async (req, res) => {
   const video = {
     id,
     name: `Cartão: ${text}`,
+    folder: '',
     filename,
     size: fs.statSync(out).size,
     duration: dur,
@@ -324,12 +333,43 @@ router.post('/:id/normalize', async (req, res) => {
   res.json(video);
 });
 
+// Move vários vídeos para uma pasta de uma vez (ids: [], folder: '').
+// Definido antes de /:id para não colidir com ele.
+router.post('/folder', async (req, res) => {
+  const state = db.get();
+  const ids = Array.isArray((req.body || {}).ids) ? req.body.ids : [];
+  const folder = sanitizeFolder((req.body || {}).folder);
+  const idSet = new Set(ids);
+  let count = 0;
+  for (const v of state.videos) {
+    if (idSet.has(v.id) && v.folder !== folder) { v.folder = folder; count += 1; }
+  }
+  if (count) await db.save();
+  res.json({ ok: true, count, folder });
+});
+
+// Renomeia uma pasta inteira (move todos os vídeos de `from` para `to`).
+router.patch('/folders', async (req, res) => {
+  const state = db.get();
+  const from = sanitizeFolder((req.body || {}).from);
+  const to = sanitizeFolder((req.body || {}).to);
+  let count = 0;
+  for (const v of state.videos) {
+    if ((v.folder || '') === from && from !== to) { v.folder = to; count += 1; }
+  }
+  if (count) await db.save();
+  res.json({ ok: true, count });
+});
+
 router.patch('/:id', async (req, res) => {
   const state = db.get();
   const video = state.videos.find((v) => v.id === req.params.id);
   if (!video) return res.status(404).json({ error: 'Vídeo não encontrado' });
   if (typeof req.body.name === 'string' && req.body.name.trim()) {
     video.name = req.body.name.trim();
+  }
+  if (typeof req.body.folder === 'string') {
+    video.folder = sanitizeFolder(req.body.folder);
   }
   await db.save();
   res.json(video);

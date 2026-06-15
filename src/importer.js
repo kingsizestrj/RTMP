@@ -25,10 +25,11 @@ function baseArgs() {
   return a;
 }
 
-function newJob(url, splitChapters, height) {
+function newJob(url, splitChapters, height, folder) {
   const j = {
     id: db.id(), url, title: url, status: 'queued', progress: 0,
     message: '', parts: 0, splitChapters: !!splitChapters, height: parseInt(height, 10) || 0,
+    folder: String(folder || '').trim().slice(0, 80),
     createdAt: new Date().toISOString()
   };
   jobs.push(j);
@@ -147,12 +148,13 @@ function cut(input, start, dur, out) {
   });
 }
 
-async function registerVideo(filename, name, duration) {
+async function registerVideo(filename, name, duration, folder) {
   const id = path.parse(filename).name;
   const file = path.join(config.UPLOAD_DIR, filename);
   const state = db.get();
   const video = {
     id, name: name.slice(0, 200),
+    folder: String(folder || '').trim().slice(0, 80),
     filename,
     size: fs.existsSync(file) ? fs.statSync(file).size : 0,
     duration: duration != null ? Math.round(duration) : null,
@@ -194,7 +196,7 @@ async function runJob(job) {
         if (ok) {
           n += 1;
           const epName = (ch.title && String(ch.title).trim()) ? String(ch.title).trim() : `${m.title} - Ep ${n}`;
-          await registerVideo(partName, epName, length);
+          await registerVideo(partName, epName, length, job.folder);
         }
       }
       fs.unlink(tmp, () => {});
@@ -204,7 +206,7 @@ async function runJob(job) {
       job.status = 'done';
       job.message = `${n} episódio(s) adicionados ao acervo`;
     } else {
-      await registerVideo(`${tmpId}.mp4`, m.title, dur);
+      await registerVideo(`${tmpId}.mp4`, m.title, dur, job.folder);
       job.tmp = null; // o arquivo virou item do acervo — não apagar ao remover o job
       if (job.splitChapters) job.message = 'sem capítulos — adicionado como vídeo único';
       else job.message = 'adicionado ao acervo';
@@ -234,12 +236,12 @@ function pump() {
 
 // Enfileira uma importação. Se playlist=true, lista os vídeos e cria um job por
 // vídeo (cada um respeitando splitChapters). Devolve o job inicial.
-function enqueue({ url, splitChapters, playlist, height }) {
+function enqueue({ url, splitChapters, playlist, height, folder }) {
   url = String(url || '').trim();
   if (!/^https?:\/\//i.test(url)) throw new Error('URL inválida (use http/https)');
 
   if (playlist) {
-    const parent = newJob(url, splitChapters, height);
+    const parent = newJob(url, splitChapters, height, folder);
     parent.status = 'downloading';
     parent.message = 'lendo a playlist...';
     enumeratePlaylist(url).then((urls) => {
@@ -248,13 +250,13 @@ function enqueue({ url, splitChapters, playlist, height }) {
       parent.title = `Playlist (${urls.length} vídeos)`;
       parent.message = `${urls.length} vídeos enfileirados`;
       parent.parts = urls.length;
-      for (const u of urls) queue.push(newJob(u, splitChapters, height));
+      for (const u of urls) queue.push(newJob(u, splitChapters, height, folder));
       pump();
     }).catch((e) => { parent.status = 'error'; parent.message = e.message; });
     return parent;
   }
 
-  const job = newJob(url, splitChapters, height);
+  const job = newJob(url, splitChapters, height, folder);
   queue.push(job);
   pump();
   return job;

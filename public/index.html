@@ -49,7 +49,9 @@
       <section id="tab-videos" class="tab hidden">
         <div class="toolbar">
           <h2>Acervo de vídeos</h2>
-          <div style="display:flex; gap:8px">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <input type="text" id="upload-folder" list="folder-options" placeholder="📁 Pasta de destino (opcional)" title="Os vídeos enviados/baixados vão para esta pasta" style="min-width:200px">
+            <datalist id="folder-options"></datalist>
             <button id="yt-btn" class="btn" title="Baixar vídeo ou playlist do YouTube para o acervo">⬇️ Baixar do YouTube</button>
             <button id="slate-btn" class="btn" title="Gera um vídeo de texto centralizado para usar como espera entre lives">🪧 Cartão de espera</button>
             <label class="btn primary">
@@ -58,6 +60,7 @@
             </label>
           </div>
         </div>
+        <div id="video-selbar" class="hidden"></div>
         <div id="upload-progress" class="hidden">
           <div class="progress-bar"><div id="upload-bar"></div></div>
           <span id="upload-label"></span>

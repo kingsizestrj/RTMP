@@ -34,6 +34,33 @@ function esc(s) {
   }[c]));
 }
 
+// ----- Pastas do acervo (rótulo em cada vídeo; '' = sem pasta) -----
+const NO_FOLDER = '— Sem pasta —';
+function folderKey(v) { return (v.folder || '').trim(); }
+function folderLabel(name) { return name || NO_FOLDER; }
+// Agrupa vídeos por pasta, preservando a ordem original dentro de cada grupo.
+function groupByFolder(videos) {
+  const map = new Map();
+  for (const v of videos) {
+    const k = folderKey(v);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(v);
+  }
+  // ordena: pastas em ordem alfabética, "sem pasta" por último
+  return [...map.entries()].sort((a, b) => {
+    if (a[0] === '') return 1;
+    if (b[0] === '') return -1;
+    return a[0].localeCompare(b[0], 'pt-BR');
+  });
+}
+function distinctFolders(videos) {
+  return [...new Set(videos.map(folderKey).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+// Estado de seleção em massa na aba Vídeos.
+const videoSel = new Set();
+let videoCache = [];           // último acervo carregado (para mover/agrupar)
+const collapsedFolders = new Set(); // pastas recolhidas (por nome)
+
 function host() {
   return serverInfo.publicHost || location.hostname;
 }
@@ -458,14 +485,11 @@ function renderImports(imports) {
     </div>`).join('');
 }
 
-async function loadVideos() {
-  const [videos, imports] = await Promise.all([api('/videos'), api('/videos/imports').catch(() => [])]);
-  renderImports(imports);
-  $('#video-list').innerHTML = videos.length === 0
-    ? '<p class="muted">Nenhum vídeo enviado ainda.</p>'
-    : videos.map((v) => `
+function videoItemHtml(v) {
+  return `
       <div class="item">
         <div class="item-head">
+          <input type="checkbox" class="vsel" data-vsel="${v.id}" ${videoSel.has(v.id) ? 'checked' : ''} title="Selecionar">
           <span class="item-title">🎬 ${esc(v.name)}</span>
           ${normBadge(v)}
           ${v.originalRemoved ? '<span class="badge stopped" title="Apenas o arquivo normalizado foi mantido (original removido)">💾 só normalizado</span>' : ''}
@@ -474,11 +498,93 @@ async function loadVideos() {
             ${(v.normalized || {}).status === 'error' && !v.originalRemoved ? `<button class="btn small" data-renorm-video="${v.id}">🔄 Tentar de novo</button>` : ''}
             ${!v.originalRemoved ? `<button class="btn small" data-split-video="${v.id}" title="Dividir em partes/episódios">✂️</button>` : ''}
             ${(v.normalized || {}).status === 'ready' && !v.originalRemoved ? `<button class="btn small" data-rmorig-video="${v.id}" title="Apagar o arquivo original e manter só o normalizado">💾</button>` : ''}
+            <button class="btn small" data-move-video="${v.id}" title="Mover para uma pasta">📁</button>
             <button class="btn small" data-rename-video="${v.id}" data-name="${esc(v.name)}">✏️</button>
             <button class="btn small danger" data-del-video="${v.id}">🗑️</button>
           </div>
         </div>
-      </div>`).join('');
+      </div>`;
+}
+
+async function loadVideos() {
+  const [videos, imports] = await Promise.all([api('/videos'), api('/videos/imports').catch(() => [])]);
+  renderImports(imports);
+  videoCache = videos;
+  // limpa da seleção ids que não existem mais
+  for (const id of [...videoSel]) if (!videos.some((v) => v.id === id)) videoSel.delete(id);
+
+  // alimenta o datalist de pastas (upload + mover)
+  const dl = $('#folder-options');
+  if (dl) dl.innerHTML = distinctFolders(videos).map((f) => `<option value="${esc(f)}">`).join('');
+
+  if (videos.length === 0) {
+    $('#video-list').innerHTML = '<p class="muted">Nenhum vídeo enviado ainda.</p>';
+    renderVideoSelbar();
+    return;
+  }
+
+  const groups = groupByFolder(videos);
+  const onlyRoot = groups.length === 1 && groups[0][0] === '';
+  $('#video-list').innerHTML = groups.map(([name, list]) => {
+    const total = list.reduce((s, v) => s + (v.duration || 0), 0);
+    // sem pastas criadas ainda: mostra a lista lisa, sem cabeçalho
+    if (onlyRoot) return list.map(videoItemHtml).join('');
+    const collapsed = collapsedFolders.has(name);
+    const allSel = list.every((v) => videoSel.has(v.id));
+    return `<div class="folder-group">
+      <div class="folder-head item-head" data-folder-head="${esc(name)}">
+        <input type="checkbox" class="fsel" data-fsel="${esc(name)}" ${allSel ? 'checked' : ''} title="Selecionar a pasta inteira">
+        <span class="item-title" data-folder-toggle="${esc(name)}" style="cursor:pointer">${collapsed ? '▸' : '▾'} 📁 ${esc(folderLabel(name))}</span>
+        <span class="muted">${list.length} vídeo(s) · ${fmtDuration(total)}</span>
+        <div class="item-actions">
+          ${name ? `<button class="btn small" data-rename-folder="${esc(name)}" title="Renomear pasta">✏️</button>` : ''}
+        </div>
+      </div>
+      <div class="folder-body ${collapsed ? 'hidden' : ''}">${list.map(videoItemHtml).join('')}</div>
+    </div>`;
+  }).join('');
+  renderVideoSelbar();
+}
+
+// Barra de ações da seleção em massa (aparece quando há ≥1 vídeo marcado).
+function renderVideoSelbar() {
+  const bar = $('#video-selbar');
+  if (!bar) return;
+  if (videoSel.size === 0) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+  bar.classList.remove('hidden');
+  bar.innerHTML = `<div class="item-head" style="gap:10px">
+    <b>${videoSel.size} selecionado(s)</b>
+    <button class="btn small primary" data-move-selected>📁 Mover para pasta…</button>
+    <button class="btn small" data-sel-clear>Limpar seleção</button>
+  </div>`;
+}
+
+// Modal para escolher a pasta de destino (existente ou nova) e mover os ids.
+function openMoveModal(ids) {
+  if (!ids.length) return;
+  const folders = distinctFolders(videoCache);
+  openModal(`
+    <h3>📁 Mover ${ids.length} vídeo(s)</h3>
+    <div class="form-row">
+      <label>Pasta de destino</label>
+      <input type="text" id="move-folder" list="move-folder-opts" placeholder="Nome da pasta (vazio = sem pasta)">
+      <datalist id="move-folder-opts">${folders.map((f) => `<option value="${esc(f)}">`).join('')}</datalist>
+      <p class="muted">Digite uma pasta existente ou um nome novo. Deixe vazio para tirar da pasta.</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="modal-cancel">Cancelar</button>
+      <button class="btn primary" id="move-go">Mover</button>
+    </div>`);
+  $('#modal-cancel').addEventListener('click', closeModal);
+  $('#move-go').addEventListener('click', async () => {
+    try {
+      const r = await api('/videos/folder', { method: 'POST', body: { ids, folder: $('#move-folder').value } });
+      closeModal();
+      videoSel.clear();
+      toast(`${r.count} vídeo(s) movido(s).`);
+      loadVideos();
+    } catch (err) { toast(err.message, true); }
+  });
 }
 
 function uploadFiles(files) {
@@ -486,6 +592,8 @@ function uploadFiles(files) {
   if (list.length === 0) return;
   const fd = new FormData();
   for (const f of list) fd.append('videos', f);
+  const folder = ($('#upload-folder') && $('#upload-folder').value || '').trim();
+  if (folder) fd.append('folder', folder);
 
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/videos/upload');
@@ -517,6 +625,45 @@ function uploadFiles(files) {
 }
 
 $('#upload-input').addEventListener('change', (e) => { uploadFiles(e.target.files); e.target.value = ''; });
+
+// Seleção em massa + recolher pastas na aba Vídeos (checkboxes = evento change).
+$('#video-list').addEventListener('change', (e) => {
+  const vsel = e.target.dataset.vsel, fsel = e.target.dataset.fsel;
+  if (vsel) {
+    if (e.target.checked) videoSel.add(vsel); else videoSel.delete(vsel);
+    renderVideoSelbar();
+    // mantém o checkbox da pasta coerente
+    syncFolderCheckbox(vsel);
+  } else if (fsel != null) {
+    const list = videoCache.filter((v) => folderKey(v) === fsel);
+    for (const v of list) { if (e.target.checked) videoSel.add(v.id); else videoSel.delete(v.id); }
+    $('#video-list').querySelectorAll('[data-vsel]').forEach((cb) => {
+      if (list.some((v) => v.id === cb.dataset.vsel)) cb.checked = e.target.checked;
+    });
+    renderVideoSelbar();
+  }
+});
+
+// Recolher/expandir a pasta ao clicar no título.
+$('#video-list').addEventListener('click', (e) => {
+  const t = e.target.closest('[data-folder-toggle]');
+  if (!t) return;
+  const name = t.dataset.folderToggle;
+  if (collapsedFolders.has(name)) collapsedFolders.delete(name); else collapsedFolders.add(name);
+  const body = t.closest('.folder-group').querySelector('.folder-body');
+  body.classList.toggle('hidden');
+  t.textContent = t.textContent.replace(/^[▸▾]/, collapsedFolders.has(name) ? '▸' : '▾');
+});
+
+// Após marcar/desmarcar um vídeo, reflete no checkbox "pasta inteira".
+function syncFolderCheckbox(videoId) {
+  const v = videoCache.find((x) => x.id === videoId);
+  if (!v) return;
+  const fcb = $(`#video-list [data-fsel="${(v.folder || '').replace(/"/g, '\\"')}"]`);
+  if (!fcb) return;
+  const list = videoCache.filter((x) => folderKey(x) === folderKey(v));
+  fcb.checked = list.length > 0 && list.every((x) => videoSel.has(x.id));
+}
 
 // Status dos cookies para os modais (atualizado ao abrir).
 function cookiesRowHtml(has, extra) {
@@ -597,6 +744,8 @@ async function openYouTubeModal() {
         <span id="yt-res-info" class="muted"></span>
       </div>
     </div>
+    <div class="form-row"><label>📁 Pasta de destino <span class="muted">(opcional — organiza o que for baixado)</span></label>
+      <input type="text" id="yt-folder" list="folder-options" placeholder="ex.: Patati Patatá" value="${esc(($('#upload-folder') && $('#upload-folder').value) || '')}"></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="yt-chapters"><label for="yt-chapters">✂️ Dividir em episódios pelos capítulos do vídeo (quando houver)</label></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="yt-playlist"><label for="yt-playlist">📃 Baixar a playlist inteira (um vídeo de cada vez)</label></div>
     ${cookiesRowHtml(cookies, s.ytdlpExtraArgs)}
@@ -638,7 +787,8 @@ async function openYouTubeModal() {
         url,
         splitChapters: $('#yt-chapters').checked,
         playlist: $('#yt-playlist').checked,
-        height: parseInt($('#yt-res').value, 10) || 0
+        height: parseInt($('#yt-res').value, 10) || 0,
+        folder: $('#yt-folder').value
       } });
       closeModal();
       toast('Importação iniciada — acompanhe acima da lista de vídeos.');
@@ -730,6 +880,25 @@ function orderedPickerHtml(order, byId) {
     </div>`).join('') || '<p class="muted">Lista vazia.</p>';
 }
 
+// Seletor de vídeos agrupado por pasta — cada pasta tem um checkbox que
+// marca/desmarca a pasta inteira de uma vez (pedido: "selecionar uma pasta de vez").
+function pickerHtml(videos, order) {
+  if (!videos.length) return '<p class="muted">Envie vídeos na aba Vídeos primeiro.</p>';
+  const groups = groupByFolder(videos);
+  const onlyRoot = groups.length === 1 && groups[0][0] === '';
+  return groups.map(([name, list]) => {
+    const rows = list.map((v) =>
+      `<label><input type="checkbox" data-add-video="${v.id}" data-folder="${esc(name)}" ${order.includes(v.id) ? 'checked' : ''}> ${esc(v.name)} <span class="muted">(${fmtDuration(v.duration)})</span></label>`
+    ).join('');
+    if (onlyRoot) return rows;
+    const allSel = list.every((v) => order.includes(v.id));
+    return `<div class="pick-folder">
+      <label class="pick-folder-head"><input type="checkbox" data-add-folder="${esc(name)}" ${allSel ? 'checked' : ''}> <b>📁 ${esc(folderLabel(name))}</b> <span class="muted">(${list.length})</span></label>
+      <div class="pick-folder-body">${rows}</div>
+    </div>`;
+  }).join('');
+}
+
 function wireOrderedPicker(listEl, pickRoot, order, byId) {
   listEl.addEventListener('click', (e) => {
     const up = e.target.dataset.up, down = e.target.dataset.down, rm = e.target.dataset.rm;
@@ -737,6 +906,7 @@ function wireOrderedPicker(listEl, pickRoot, order, byId) {
     else if (down != null) { const i = +down; [order[i], order[i + 1]] = [order[i + 1], order[i]]; }
     else if (rm != null) order.splice(+rm, 1);
     else return;
+    syncPickerChecks(pickRoot, order);
     listEl.innerHTML = orderedPickerHtml(order, byId);
   });
   pickRoot.querySelectorAll('[data-add-video]').forEach((cb) => {
@@ -744,9 +914,40 @@ function wireOrderedPicker(listEl, pickRoot, order, byId) {
       const vid = cb.dataset.addVideo;
       if (cb.checked) { if (!order.includes(vid)) order.push(vid); }
       else { const i = order.indexOf(vid); if (i !== -1) order.splice(i, 1); }
+      syncFolderHead(pickRoot, cb.dataset.folder);
       listEl.innerHTML = orderedPickerHtml(order, byId);
     });
   });
+  pickRoot.querySelectorAll('[data-add-folder]').forEach((fcb) => {
+    fcb.addEventListener('change', () => {
+      const folder = fcb.dataset.addFolder;
+      pickRoot.querySelectorAll(`[data-add-video][data-folder="${cssEsc(folder)}"]`).forEach((cb) => {
+        cb.checked = fcb.checked;
+        const vid = cb.dataset.addVideo;
+        if (fcb.checked) { if (!order.includes(vid)) order.push(vid); }
+        else { const i = order.indexOf(vid); if (i !== -1) order.splice(i, 1); }
+      });
+      listEl.innerHTML = orderedPickerHtml(order, byId);
+    });
+  });
+}
+
+// Escapa aspas para uso em seletores de atributo.
+function cssEsc(s) { return String(s).replace(/(["\\])/g, '\\$1'); }
+
+// Mantém o checkbox "pasta inteira" coerente com os vídeos marcados.
+function syncFolderHead(pickRoot, folder) {
+  const fcb = pickRoot.querySelector(`[data-add-folder="${cssEsc(folder || '')}"]`);
+  if (!fcb) return;
+  const cbs = [...pickRoot.querySelectorAll(`[data-add-video][data-folder="${cssEsc(folder || '')}"]`)];
+  fcb.checked = cbs.length > 0 && cbs.every((c) => c.checked);
+}
+
+// Após reordenar/remover na lista, reflete o estado nos checkboxes do picker.
+function syncPickerChecks(pickRoot, order) {
+  const inOrder = new Set(order);
+  pickRoot.querySelectorAll('[data-add-video]').forEach((cb) => { cb.checked = inOrder.has(cb.dataset.addVideo); });
+  pickRoot.querySelectorAll('[data-add-folder]').forEach((fcb) => syncFolderHead(pickRoot, fcb.dataset.addFolder));
 }
 
 async function loadPlaylists() {
@@ -803,9 +1004,9 @@ async function editPlaylist(id) {
     <div class="form-row">
       <label>Vídeos (ordem de reprodução)</label>
       <div id="pl-order">${orderedPickerHtml(order, byId)}</div>
-      <label style="margin-top:10px">Adicionar vídeos</label>
+      <label style="margin-top:10px">Adicionar vídeos <span class="muted">— marque a pasta para selecionar tudo de uma vez</span></label>
       <div class="playlist-pick">
-        ${videos.map((v) => `<label><input type="checkbox" data-add-video="${v.id}" ${order.includes(v.id) ? 'checked' : ''}> ${esc(v.name)} <span class="muted">(${fmtDuration(v.duration)})</span></label>`).join('') || '<p class="muted">Envie vídeos na aba Vídeos primeiro.</p>'}
+        ${pickerHtml(videos, order)}
       </div>
     </div>
     <div class="modal-actions">
@@ -1549,7 +1750,7 @@ function showPreview(key) {
 /* ---------- delegação de cliques ---------- */
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-rmorig-video],[data-edit-playlist],[data-del-playlist],[data-edit-campaign],[data-del-campaign],[data-rm-import],[data-clear-imports],[data-restream-channel],[data-rs-toggle],[data-rs-del],[data-regen-input],[data-del-input]');
+  const t = e.target.closest('[data-copy],[data-preview],[data-start-channel],[data-stop-channel],[data-edit-channel],[data-logs-channel],[data-del-channel],[data-start-relay],[data-stop-relay],[data-edit-relay],[data-logs-relay],[data-del-relay],[data-del-video],[data-rename-video],[data-renorm-video],[data-split-video],[data-rmorig-video],[data-move-video],[data-move-selected],[data-sel-clear],[data-rename-folder],[data-edit-playlist],[data-del-playlist],[data-edit-campaign],[data-del-campaign],[data-rm-import],[data-clear-imports],[data-restream-channel],[data-rs-toggle],[data-rs-del],[data-regen-input],[data-del-input]');
   if (!t) return;
   const d = t.dataset;
   // Evita clique duplo disparar a mesma ação duas vezes (ex.: dois starts)
@@ -1608,6 +1809,16 @@ document.addEventListener('click', async (e) => {
           const r = await api(`/videos/${d.rmorigVideo}/original`, { method: 'DELETE' });
           toast(`Original removido (${fmtBytes(r.freed || 0)} liberados)`); loadVideos();
         } catch (err) { toast(err.message, true); }
+      }
+    }
+    else if (d.moveVideo) openMoveModal([d.moveVideo]);
+    else if (d.moveSelected != null) openMoveModal([...videoSel]);
+    else if (d.selClear != null) { videoSel.clear(); loadVideos(); }
+    else if (d.renameFolder != null) {
+      const to = prompt('Novo nome da pasta:', d.renameFolder);
+      if (to != null && to.trim() !== d.renameFolder) {
+        await api('/videos/folders', { method: 'PATCH', body: { from: d.renameFolder, to } });
+        toast('Pasta renomeada.'); loadVideos();
       }
     }
     else if (d.editPlaylist) editPlaylist(d.editPlaylist);

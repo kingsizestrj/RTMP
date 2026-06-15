@@ -8,7 +8,7 @@ const config = require('./config');
 const DB_FILE = path.join(config.DATA_DIR, 'db.json');
 
 const DEFAULTS = {
-  videos: [],    // { id, name, filename, size, duration, durationSec, normalized, createdAt }
+  videos: [],    // { id, name, folder, filename, size, duration, durationSec, normalized, createdAt }
   playlists: [], // { id, name, videoIds, createdAt }
   channels: [],  // { id, name, key, defaultPlaylistId, schedule[], breakVideoIds, breakEvery, liveInputId, shuffle, mode, ... }
   relays: [],    // { id, name, key, sourceUrl, ytdlp, mode, loop, autostart }
@@ -48,6 +48,10 @@ function migrate(s) {
   for (const p of s.playlists) {
     // Classificação indicativa do programa (''=sem; L,10,12,14,16,18)
     if (typeof p.rating !== 'string') { p.rating = ''; changed = true; }
+  }
+  for (const v of s.videos) {
+    // Pasta de organização do acervo ('' = sem pasta)
+    if (typeof v.folder !== 'string') { v.folder = ''; changed = true; }
   }
   return changed;
 }
