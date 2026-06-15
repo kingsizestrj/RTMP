@@ -11,8 +11,9 @@ services:
       - "8000:8000"   # HTTP-FLV
     environment:
       NODE_ENV: production
-      # Fuso horário da grade de programação (ex.: America/Sao_Paulo)
-      TZ: ${TZ:-}
+      # Fuso horário da grade de programação. Requer tzdata na imagem (já
+      # incluído no Dockerfile) — sem ele o Alpine ignora o TZ e roda em UTC.
+      TZ: ${TZ:-America/Sao_Paulo}
       SEAMLESS_HORIZON_SEC: ${SEAMLESS_HORIZON_SEC:-21600}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
