@@ -527,7 +527,12 @@ function cookiesRowHtml(has) {
       ${has ? '<button type="button" class="btn small danger" id="yt-cookies-del">Remover</button>' : ''}
       <span class="muted">necessário para vídeos com login/idade ou IP bloqueado</span>
     </div>
-    <p class="muted">No Firefox: instale a extensão <b>"Get cookies.txt LOCALLY"</b>, abra o YouTube logado, clique na extensão → <i>Export</i>, e envie o arquivo aqui.</p>
+    <p class="muted">No Firefox: instale a extensão <b>"Get cookies.txt LOCALLY"</b>, abra o YouTube <b>numa aba anônima logada</b>, clique na extensão → <i>Export</i>, envie aqui e <b>feche a aba anônima sem deslogar</b> (assim o YouTube não invalida os cookies).</p>
+    <div style="display:flex; gap:8px; align-items:center; margin-top:4px; flex-wrap:wrap">
+      <input type="text" id="yt-cookies-testurl" placeholder="URL do YouTube para testar os cookies" style="flex:1; min-width:200px">
+      <button type="button" class="btn small" id="yt-cookies-test">🧪 Testar</button>
+    </div>
+    <div id="yt-cookies-testres" class="muted" style="margin-top:4px"></div>
   </div>`;
 }
 
@@ -548,6 +553,20 @@ function wireCookies(reopen) {
   if (delEl) delEl.addEventListener('click', async () => {
     try { await api('/settings/cookies', { method: 'DELETE' }); toast('Cookies removidos.'); reopen(); }
     catch (err) { toast(err.message, true); }
+  });
+  const testEl = $('#yt-cookies-test');
+  if (testEl) testEl.addEventListener('click', async () => {
+    const url = $('#yt-cookies-testurl').value.trim();
+    const box = $('#yt-cookies-testres');
+    if (!url) { box.textContent = 'Cole uma URL do YouTube para testar.'; return; }
+    box.textContent = 'Testando…';
+    testEl.disabled = true;
+    try {
+      const r = await api('/settings/cookies/test', { method: 'POST', body: { url } });
+      if (r.ok) box.innerHTML = `✅ Funcionou: <b>${esc(r.title || '')}</b>${r.cookies ? ' (com cookies)' : ' (sem cookies — esse vídeo é público)'}`;
+      else box.innerHTML = `❌ ${esc(r.error)}<br><span class="muted">${r.cookies ? 'cookies presentes mas recusados — reexporte de uma aba anônima logada' : 'sem cookies — envie o cookies.txt acima'}</span>`;
+    } catch (err) { box.textContent = 'Erro: ' + err.message; }
+    testEl.disabled = false;
   });
 }
 

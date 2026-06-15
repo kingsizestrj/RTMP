@@ -4,9 +4,19 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 const config = require('../config');
 const db = require('../db');
 const notify = require('../notify');
+
+// Argumentos do yt-dlp como nas chamadas reais (cookies + runtime JS + extras).
+function ytdlpArgs() {
+  const a = ['--no-playlist', '--no-warnings', '--socket-timeout', '30'];
+  if (fs.existsSync(config.COOKIES_PATH)) a.push('--cookies', config.COOKIES_PATH);
+  if (config.YTDLP_JS_RUNTIME) a.push('--js-runtimes', config.YTDLP_JS_RUNTIME);
+  a.push(...config.YTDLP_EXTRA_ARGS);
+  return a;
+}
 
 const router = express.Router();
 
@@ -69,6 +79,22 @@ router.post('/cookies', upload.single('cookies'), (req, res) => {
 router.delete('/cookies', (req, res) => {
   fs.unlink(config.COOKIES_PATH, () => {});
   res.json({ ok: true, cookies: false });
+});
+
+// Testa os cookies/yt-dlp contra uma URL: diz se conseguiu extrair (cookies
+// válidos) ou devolve o erro real do YouTube.
+router.post('/cookies/test', (req, res) => {
+  const url = String((req.body || {}).url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Informe uma URL do YouTube para testar' });
+  const hasCookies = fs.existsSync(config.COOKIES_PATH);
+  const args = [...ytdlpArgs(), '--skip-download', '--print', '%(title)s', url];
+  execFile(config.YTDLP_PATH, args, { timeout: 60000, maxBuffer: 1024 * 1024 }, (err, out, errout) => {
+    if (err) {
+      const reason = (errout || err.message).trim().split('\n').filter(Boolean).pop() || 'falha';
+      return res.json({ ok: false, cookies: hasCookies, error: reason });
+    }
+    res.json({ ok: true, cookies: hasCookies, title: String(out).trim().split('\n')[0] });
+  });
 });
 
 // Salva a configuração de alertas do Telegram. O token só é gravado quando

@@ -788,7 +788,13 @@ async function spawnStream(id, type, buildArgs, getItem) {
     plan = await buildArgs(item, entry);
   } catch (err) {
     entry.preparing = false;
-    pushLog(entry, `Erro ao preparar origem: ${err.message}`);
+    let msg = err.message;
+    if (/sign in|not a bot|cookies|confirm you/i.test(msg)) {
+      msg += fs.existsSync(config.COOKIES_PATH)
+        ? ' [cookies presentes mas recusados — provavelmente expiraram: reexporte de uma aba anônima logada no YouTube]'
+        : ' [sem cookies — importe o cookies.txt em ⬇️ Baixar do YouTube → 🍪]';
+    }
+    pushLog(entry, `Erro ao preparar origem: ${msg}`);
     if (!entry.stopping) scheduleRetry(entry, id, type, buildArgs, getItem);
     return;
   }
