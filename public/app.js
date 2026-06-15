@@ -519,7 +519,7 @@ function uploadFiles(files) {
 $('#upload-input').addEventListener('change', (e) => { uploadFiles(e.target.files); e.target.value = ''; });
 
 // Status dos cookies para os modais (atualizado ao abrir).
-function cookiesRowHtml(has) {
+function cookiesRowHtml(has, extra) {
   return `<div class="form-row" id="yt-cookies-row">
     <label>🍪 Cookies do YouTube ${has ? '<span class="muted">(enviado ✓)</span>' : '<span style="color:var(--yellow)">(nenhum)</span>'}</label>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
@@ -533,6 +533,12 @@ function cookiesRowHtml(has) {
       <button type="button" class="btn small" id="yt-cookies-test">🧪 Testar</button>
     </div>
     <div id="yt-cookies-testres" class="muted" style="margin-top:4px"></div>
+    <label style="margin-top:8px">⚙️ Argumentos avançados do yt-dlp (opcional)</label>
+    <div style="display:flex; gap:8px; flex-wrap:wrap">
+      <input type="text" id="yt-extra" value="${esc(extra || '')}" placeholder="--extractor-args youtube:player_client=tv" style="flex:1; min-width:220px">
+      <button type="button" class="btn small" id="yt-extra-save">Salvar</button>
+    </div>
+    <p class="muted">Para contornar "Sign in to confirm you're not a bot" em VPS, tente <code>--extractor-args youtube:player_client=tv</code> (ou <code>mweb</code> / <code>web_safari</code>), salve e use o 🧪 Testar acima.</p>
   </div>`;
 }
 
@@ -554,6 +560,11 @@ function wireCookies(reopen) {
     try { await api('/settings/cookies', { method: 'DELETE' }); toast('Cookies removidos.'); reopen(); }
     catch (err) { toast(err.message, true); }
   });
+  const extraEl = $('#yt-extra-save');
+  if (extraEl) extraEl.addEventListener('click', async () => {
+    try { await api('/settings/flags', { method: 'PATCH', body: { ytdlpExtraArgs: $('#yt-extra').value } }); toast('Argumentos salvos — use o 🧪 Testar.'); }
+    catch (err) { toast(err.message, true); }
+  });
   const testEl = $('#yt-cookies-test');
   if (testEl) testEl.addEventListener('click', async () => {
     const url = $('#yt-cookies-testurl').value.trim();
@@ -571,15 +582,16 @@ function wireCookies(reopen) {
 }
 
 async function openYouTubeModal() {
-  let cookies = false;
-  try { cookies = (await api('/settings')).cookies; } catch {}
+  let s = {};
+  try { s = await api('/settings'); } catch {}
+  const cookies = s.cookies;
   openModal(`
     <h3>⬇️ Baixar do YouTube</h3>
     <div class="form-row"><label>URL do vídeo ou da playlist</label>
       <input type="text" id="yt-url" placeholder="https://www.youtube.com/watch?v=..."></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="yt-chapters"><label for="yt-chapters">✂️ Dividir em episódios pelos capítulos do vídeo (quando houver)</label></div>
     <div class="form-row checkbox-row"><input type="checkbox" id="yt-playlist"><label for="yt-playlist">📃 Baixar a playlist inteira (um vídeo de cada vez)</label></div>
-    ${cookiesRowHtml(cookies)}
+    ${cookiesRowHtml(cookies, s.ytdlpExtraArgs)}
     <p class="muted">Os vídeos baixados entram na normalização automaticamente. Baixe apenas conteúdo que você tem direito de usar.</p>
     <div class="modal-actions">
       <button class="btn" id="modal-cancel">Cancelar</button>

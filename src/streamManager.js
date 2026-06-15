@@ -470,7 +470,7 @@ function ytdlpBaseArgs() {
   const args = ['--no-playlist', '--no-warnings', '--socket-timeout', '30'];
   if (fs.existsSync(config.COOKIES_PATH)) args.push('--cookies', config.COOKIES_PATH);
   if (config.YTDLP_JS_RUNTIME) args.push('--js-runtimes', config.YTDLP_JS_RUNTIME);
-  args.push(...config.YTDLP_EXTRA_ARGS);
+  args.push(...require('./ytdlpopts').extraArgs());
   return args;
 }
 
@@ -538,7 +538,7 @@ async function listChannelLives(sourceUrl) {
     const args = ['--no-warnings', '--socket-timeout', '30'];
     if (fs.existsSync(config.COOKIES_PATH)) args.push('--cookies', config.COOKIES_PATH);
     if (config.YTDLP_JS_RUNTIME) args.push('--js-runtimes', config.YTDLP_JS_RUNTIME);
-    args.push(...config.YTDLP_EXTRA_ARGS);
+    args.push(...require('./ytdlpopts').extraArgs());
     args.push(
       '--flat-playlist', '--playlist-items', '1-20',
       '--print', '%(id)s\t%(live_status)s\t%(title)s',

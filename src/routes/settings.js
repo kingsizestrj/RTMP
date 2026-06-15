@@ -14,7 +14,7 @@ function ytdlpArgs() {
   const a = ['--no-playlist', '--no-warnings', '--socket-timeout', '30'];
   if (fs.existsSync(config.COOKIES_PATH)) a.push('--cookies', config.COOKIES_PATH);
   if (config.YTDLP_JS_RUNTIME) a.push('--js-runtimes', config.YTDLP_JS_RUNTIME);
-  a.push(...config.YTDLP_EXTRA_ARGS);
+  a.push(...require('../ytdlpopts').extraArgs());
   return a;
 }
 
@@ -38,21 +38,26 @@ function telegramView() {
 }
 
 router.get('/', (req, res) => {
+  const s = db.get().settings || {};
   res.json({
     logo: fs.existsSync(config.LOGO_PATH),
     cookies: fs.existsSync(config.COOKIES_PATH),
-    removeOriginals: !!(db.get().settings || {}).removeOriginals,
+    removeOriginals: !!s.removeOriginals,
+    ytdlpExtraArgs: s.ytdlpExtraArgs || '',
     telegram: telegramView()
   });
 });
 
-// Política: manter só os normalizados (apaga o original ao terminar de normalizar).
+// Flags gerais: política de originais e argumentos extras do yt-dlp (ajuste
+// fino da extração do YouTube — ex.: trocar o cliente do player).
 router.patch('/flags', async (req, res) => {
+  const b = req.body || {};
   const state = db.get();
   if (!state.settings) state.settings = {};
-  if (typeof (req.body || {}).removeOriginals === 'boolean') state.settings.removeOriginals = req.body.removeOriginals;
+  if (typeof b.removeOriginals === 'boolean') state.settings.removeOriginals = b.removeOriginals;
+  if (typeof b.ytdlpExtraArgs === 'string') state.settings.ytdlpExtraArgs = b.ytdlpExtraArgs.trim().slice(0, 300);
   await db.save();
-  res.json({ removeOriginals: !!state.settings.removeOriginals });
+  res.json({ removeOriginals: !!state.settings.removeOriginals, ytdlpExtraArgs: state.settings.ytdlpExtraArgs || '' });
 });
 
 // Importa os cookies do YouTube (arquivo cookies.txt no formato Netscape,
