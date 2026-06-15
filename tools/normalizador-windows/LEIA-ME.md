@@ -14,6 +14,21 @@ Vídeos pré-normalizados sobem pro painel e ficam prontos em **segundos**
    (configurável).
 6. Suba os arquivos da pasta de saída no painel — upload instantâneo. ⚡
 
+## Baixar do YouTube (no seu PC)
+
+Em vez de baixar pelo servidor (onde o YouTube costuma bloquear o IP), baixe
+**no seu PC** — aqui o yt-dlp lê os cookies direto do Firefox instalado.
+
+1. Clique em **"Baixar YouTube..."**.
+2. Cole a URL do vídeo (ou da playlist).
+3. (Opcional) **"Listar resoluções"** mostra o que o vídeo oferece.
+4. Escolha a **resolução** — dica: escolha a **mesma do perfil** (ex.: 720p).
+   Assim o arquivo já vem no padrão e a normalização é **pulada** (instantâneo).
+5. Marque **"Usar cookies do Firefox"** se o vídeo pedir login/idade, e
+   **"Playlist inteira"** se for uma playlist.
+6. Ele baixa e, em seguida, normaliza automaticamente (ou pula, se já estiver
+   no padrão). O `yt-dlp.exe` é baixado sozinho na primeira vez.
+
 ## Detalhes
 
 - **Perfil**: os campos no topo (resolução, FPS, bitrates, preset) vêm com os

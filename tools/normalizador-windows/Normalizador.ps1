@@ -5,7 +5,9 @@
 # para que o upload no painel seja instantaneo (so reempacota, sem re-encode).
 #
 # - Interface grafica com fila, progresso e arrastar-e-soltar
-# - Baixa o FFmpeg automaticamente na primeira execucao
+# - Baixa do YouTube (URL/playlist), com escolha/listagem de resolucao e
+#   cookies do Firefox; baixar na resolucao do perfil costuma pular a conversao
+# - Baixa o FFmpeg e o yt-dlp automaticamente na primeira execucao
 # - Mesma deteccao inteligente do servidor: pula o que ja esta no padrao
 #
 # Requisitos: Windows 10+ (PowerShell 5.1, ja incluso no Windows)
@@ -20,6 +22,10 @@ $script:FFmpeg    = Join-Path $script:BinDir 'ffmpeg.exe'
 $script:FFprobe   = Join-Path $script:BinDir 'ffprobe.exe'
 $script:Extensions = @('.mp4', '.mkv', '.mov', '.avi', '.flv', '.ts', '.m4v', '.webm')
 $script:FFmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip'
+$script:Ytdlp     = Join-Path $script:BinDir 'yt-dlp.exe'
+$script:YtdlpUrl  = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
+# Prioriza H.264+AAC ate 1080p (mesmo perfil do servidor) para conversao leve
+$script:YtFormat  = 'bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/b[vcodec^=avc1][height<=1080]/b'
 
 # ----------------------------------------------------------------------------
 # Funcoes de analise e montagem de comando (espelham o servidor)
@@ -137,6 +143,51 @@ function Read-ProgressFile([string]$Path) {
     } catch { return $null }
 }
 
+# ----------------------------------------------------------------------------
+# YouTube (yt-dlp) - funcoes testaveis
+# ----------------------------------------------------------------------------
+
+# Monta os args do yt-dlp para baixar. Height=0 => melhor ate 1080p; senao,
+# melhor ate a altura escolhida (baixar ja na resolucao do perfil costuma
+# permitir PULAR a normalizacao).
+function Get-YtdlpArgs([string]$Url, [string]$OutDir, [bool]$Cookies, [bool]$Playlist, [int]$Height) {
+    $hf = if ($Height -gt 0) { "[height<=$Height]" } else { "[height<=1080]" }
+    $fmt = "bv*[vcodec^=avc1]$hf+ba[acodec^=mp4a]/b[vcodec^=avc1]$hf/b$hf/b"
+    $a = @('--no-warnings', '--newline', '--no-mtime', '-f', $fmt, '--merge-output-format', 'mp4',
+           '-o', (Join-Path $OutDir '%(title).80s [%(id)s].%(ext)s'))
+    if ($Cookies)  { $a += @('--cookies-from-browser', 'firefox') }
+    if ($Playlist) { $a += '--yes-playlist' } else { $a += '--no-playlist' }
+    $a += $Url
+    return , $a
+}
+
+# Args para listar os formatos disponiveis (yt-dlp -F).
+function Get-YtdlpListArgs([string]$Url, [bool]$Cookies) {
+    $a = @('--no-warnings', '--no-playlist', '-F')
+    if ($Cookies) { $a += @('--cookies-from-browser', 'firefox') }
+    $a += $Url
+    return , $a
+}
+
+# Extrai as alturas (resolucoes) distintas da saida do "yt-dlp -F", em ordem
+# decrescente: ['1080p','720p','480p',...].
+function Parse-Resolutions([string]$Text) {
+    $heights = @{}
+    foreach ($m in [regex]::Matches($Text, '\b\d{2,4}x(\d{2,4})\b')) {
+        $h = [int]$m.Groups[1].Value
+        if ($h -ge 144) { $heights[$h] = $true }
+    }
+    return @($heights.Keys | Sort-Object -Descending | ForEach-Object { "${_}p" })
+}
+
+# Lista as arquivos de midia baixados numa pasta.
+function Find-Media([string]$Dir) {
+    if (-not (Test-Path $Dir)) { return @() }
+    return @(Get-ChildItem -Path $Dir -File -ErrorAction SilentlyContinue |
+        Where-Object { $script:Extensions -contains $_.Extension.ToLower() } |
+        ForEach-Object { $_.FullName })
+}
+
 # Modo de teste (CI/Linux): exporta apenas as funcoes acima, sem GUI
 if ($env:NORMALIZADOR_NO_GUI -eq '1') { return }
 
@@ -190,6 +241,85 @@ function Install-FFmpeg {
 }
 
 if (-not (Install-FFmpeg)) { return }
+
+# Baixa o yt-dlp.exe sob demanda (na primeira vez que usar o YouTube).
+function Install-Ytdlp {
+    if (Test-Path $script:Ytdlp) { return $true }
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        New-Item -ItemType Directory -Force -Path $script:BinDir | Out-Null
+        $oldPP = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+        try { Invoke-WebRequest -Uri $script:YtdlpUrl -OutFile $script:Ytdlp -UseBasicParsing }
+        finally { $ProgressPreference = $oldPP }
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Falha ao baixar o yt-dlp: $($_.Exception.Message)", 'Erro', 'OK', 'Error')
+        return $false
+    }
+    return (Test-Path $script:Ytdlp)
+}
+
+# Dialogo de download do YouTube: URL, listar resolucoes, escolher resolucao,
+# cookies do Firefox e playlist. Devolve @{Url;Cookies;Playlist;Height} ou $null.
+function Show-YouTubeDialog {
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text = 'Baixar do YouTube'
+    $f.Size = New-Object System.Drawing.Size(540, 320)
+    $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false
+
+    $l = New-Object System.Windows.Forms.Label
+    $l.Text = 'URL do video ou playlist:'; $l.Location = New-Object System.Drawing.Point(12, 12); $l.AutoSize = $true; $f.Controls.Add($l)
+    $t = New-Object System.Windows.Forms.TextBox
+    $t.Location = New-Object System.Drawing.Point(12, 34); $t.Width = 510; $f.Controls.Add($t)
+
+    $cbC = New-Object System.Windows.Forms.CheckBox
+    $cbC.Text = 'Usar cookies do Firefox (videos com login/idade)'; $cbC.Location = New-Object System.Drawing.Point(12, 66); $cbC.AutoSize = $true; $cbC.Checked = $true; $f.Controls.Add($cbC)
+    $cbP = New-Object System.Windows.Forms.CheckBox
+    $cbP.Text = 'Baixar a playlist inteira'; $cbP.Location = New-Object System.Drawing.Point(12, 90); $cbP.AutoSize = $true; $f.Controls.Add($cbP)
+
+    $lr = New-Object System.Windows.Forms.Label
+    $lr.Text = 'Resolucao:'; $lr.Location = New-Object System.Drawing.Point(12, 120); $lr.AutoSize = $true; $f.Controls.Add($lr)
+    $cmb = New-Object System.Windows.Forms.ComboBox
+    $cmb.DropDownStyle = 'DropDownList'; $cmb.Location = New-Object System.Drawing.Point(90, 117); $cmb.Width = 150
+    [void]$cmb.Items.AddRange(@('Melhor (ate 1080p)', '1080p', '720p', '480p', '360p')); $cmb.SelectedIndex = 2; $f.Controls.Add($cmb)
+    $btnList = New-Object System.Windows.Forms.Button
+    $btnList.Text = 'Listar resolucoes'; $btnList.Location = New-Object System.Drawing.Point(250, 116); $btnList.Width = 130; $f.Controls.Add($btnList)
+    $lblRes = New-Object System.Windows.Forms.Label
+    $lblRes.Location = New-Object System.Drawing.Point(12, 150); $lblRes.Size = New-Object System.Drawing.Size(510, 60); $lblRes.ForeColor = [System.Drawing.Color]::DimGray; $f.Controls.Add($lblRes)
+
+    $btnList.Add_Click({
+        $u = $t.Text.Trim()
+        if (-not $u) { $lblRes.Text = 'Cole a URL primeiro.'; return }
+        $lblRes.Text = 'Consultando...'; $f.Refresh()
+        try {
+            $out = & $script:Ytdlp (Get-YtdlpListArgs $u $cbC.Checked) 2>&1 | Out-String
+            $res = Parse-Resolutions $out
+            $lblRes.Text = if ($res.Count) { 'Disponiveis: ' + ($res -join ', ') } else { 'Nao consegui listar (confira a URL/cookies).' }
+        } catch { $lblRes.Text = "Erro: $($_.Exception.Message)" }
+    })
+
+    $ok = New-Object System.Windows.Forms.Button
+    $ok.Text = 'Baixar'; $ok.Location = New-Object System.Drawing.Point(336, 240); $ok.Width = 90; $ok.DialogResult = 'OK'; $f.Controls.Add($ok); $f.AcceptButton = $ok
+    $ca = New-Object System.Windows.Forms.Button
+    $ca.Text = 'Cancelar'; $ca.Location = New-Object System.Drawing.Point(432, 240); $ca.Width = 90; $ca.DialogResult = 'Cancel'; $f.Controls.Add($ca); $f.CancelButton = $ca
+
+    if ($f.ShowDialog() -ne 'OK') { return $null }
+    $u = $t.Text.Trim()
+    if (-not $u) { return $null }
+    $heights = @{ 'Melhor (ate 1080p)' = 0; '1080p' = 1080; '720p' = 720; '480p' = 480; '360p' = 360 }
+    return @{ Url = $u; Cookies = $cbC.Checked; Playlist = $cbP.Checked; Height = [int]$heights[[string]$cmb.SelectedItem] }
+}
+
+# Le o progresso (%) do log do yt-dlp mesmo com o arquivo aberto.
+function Read-DlProgress([string]$Path) {
+    if (-not (Test-Path $Path)) { return $null }
+    try {
+        $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+        try { $text = (New-Object System.IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Close() }
+        $pct = $null
+        foreach ($m in [regex]::Matches($text, '(\d{1,3}(?:\.\d+)?)%')) { $pct = [math]::Round([double]$m.Groups[1].Value) }
+        return $pct
+    } catch { return $null }
+}
 
 # ----------------------------------------------------------------------------
 # Interface grafica
@@ -278,31 +408,38 @@ $form.Controls.Add($list)
 
 # --- Botoes ---
 $btnAdd = New-Object System.Windows.Forms.Button
-$btnAdd.Text = 'Adicionar videos...'
+$btnAdd.Text = 'Adicionar...'
 $btnAdd.Location = New-Object System.Drawing.Point(12, 500)
-$btnAdd.Size = New-Object System.Drawing.Size(130, 32)
+$btnAdd.Size = New-Object System.Drawing.Size(100, 32)
 $btnAdd.Anchor = 'Bottom,Left'
 $form.Controls.Add($btnAdd)
 
+$btnYt = New-Object System.Windows.Forms.Button
+$btnYt.Text = 'Baixar YouTube...'
+$btnYt.Location = New-Object System.Drawing.Point(118, 500)
+$btnYt.Size = New-Object System.Drawing.Size(130, 32)
+$btnYt.Anchor = 'Bottom,Left'
+$form.Controls.Add($btnYt)
+
 $btnStart = New-Object System.Windows.Forms.Button
 $btnStart.Text = 'Iniciar'
-$btnStart.Location = New-Object System.Drawing.Point(150, 500)
-$btnStart.Size = New-Object System.Drawing.Size(110, 32)
+$btnStart.Location = New-Object System.Drawing.Point(254, 500)
+$btnStart.Size = New-Object System.Drawing.Size(90, 32)
 $btnStart.Anchor = 'Bottom,Left'
 $form.Controls.Add($btnStart)
 
 $btnStop = New-Object System.Windows.Forms.Button
 $btnStop.Text = 'Parar'
 $btnStop.Enabled = $false
-$btnStop.Location = New-Object System.Drawing.Point(268, 500)
-$btnStop.Size = New-Object System.Drawing.Size(90, 32)
+$btnStop.Location = New-Object System.Drawing.Point(350, 500)
+$btnStop.Size = New-Object System.Drawing.Size(80, 32)
 $btnStop.Anchor = 'Bottom,Left'
 $form.Controls.Add($btnStop)
 
 $btnOpenOut = New-Object System.Windows.Forms.Button
-$btnOpenOut.Text = 'Abrir pasta de saida'
-$btnOpenOut.Location = New-Object System.Drawing.Point(366, 500)
-$btnOpenOut.Size = New-Object System.Drawing.Size(140, 32)
+$btnOpenOut.Text = 'Abrir pasta'
+$btnOpenOut.Location = New-Object System.Drawing.Point(436, 500)
+$btnOpenOut.Size = New-Object System.Drawing.Size(110, 32)
 $btnOpenOut.Anchor = 'Bottom,Left'
 $form.Controls.Add($btnOpenOut)
 $btnOpenOut.Add_Click({
@@ -310,14 +447,15 @@ $btnOpenOut.Add_Click({
 })
 
 $lblStatus = New-Object System.Windows.Forms.Label
-$lblStatus.Text = 'Arraste videos para a lista ou clique em "Adicionar videos".'
-$lblStatus.Location = New-Object System.Drawing.Point(520, 508)
-$lblStatus.Size = New-Object System.Drawing.Size(280, 24)
-$lblStatus.Anchor = 'Bottom,Left,Right'
+$lblStatus.Text = 'Arraste videos, clique em "Adicionar..." ou "Baixar YouTube...".'
+$lblStatus.Location = New-Object System.Drawing.Point(556, 508)
+$lblStatus.Size = New-Object System.Drawing.Size(244, 24)
+$lblStatus.Anchor = 'Bottom,Right'
 $form.Controls.Add($lblStatus)
 
 # --- Fila ---
 $script:Queue = New-Object System.Collections.ArrayList
+$script:Downloads = New-Object System.Collections.ArrayList
 $script:Processing = $false
 $script:CurrentItem = $null
 $script:CurrentProc = $null
@@ -348,6 +486,28 @@ $btnAdd.Add_Click({
     $dlg.Multiselect = $true
     $dlg.Filter = 'Videos|*.mp4;*.mkv;*.mov;*.avi;*.flv;*.ts;*.m4v;*.webm|Todos|*.*'
     if ($dlg.ShowDialog() -eq 'OK') { Add-Files $dlg.FileNames }
+})
+
+$btnYt.Add_Click({
+    if (-not (Install-Ytdlp)) { return }
+    $opts = Show-YouTubeDialog
+    if (-not $opts) { return }
+    $dir = Join-Path $env:TEMP ('ytdl_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $li = New-Object System.Windows.Forms.ListViewItem("YouTube: $($opts.Url)")
+    [void]$li.SubItems.Add('-'); [void]$li.SubItems.Add('baixando...'); [void]$li.SubItems.Add('0%')
+    [void]$list.Items.Add($li)
+    $prog = Join-Path $dir 'dl.log'
+    $errf = Join-Path $dir 'err.log'
+    $ytArgs = Get-YtdlpArgs $opts.Url $dir $opts.Cookies $opts.Playlist $opts.Height
+    try {
+        $proc = Start-Process -FilePath $script:Ytdlp -ArgumentList (ConvertTo-ArgString $ytArgs) `
+            -WindowStyle Hidden -PassThru -RedirectStandardOutput $prog -RedirectStandardError $errf
+        [void]$script:Downloads.Add([PSCustomObject]@{ Dir = $dir; Proc = $proc; Item = $li; Prog = $prog; Err = $errf })
+        $lblStatus.Text = 'Baixando do YouTube...'
+    } catch {
+        $li.SubItems[2].Text = "erro: $($_.Exception.Message)"
+    }
 })
 
 $list.Add_DragEnter({
@@ -393,10 +553,41 @@ function Stop-Processing([string]$Reason) {
     $lblStatus.Text = $Reason
 }
 
+# Acompanha os downloads do YouTube: ao terminar, joga os arquivos baixados na
+# fila de conversao (que normaliza no perfil — ou pula, se ja vier no padrao).
+function Poll-Downloads {
+    if ($script:Downloads.Count -eq 0) { return }
+    $finished = @()
+    foreach ($d in $script:Downloads) {
+        $pct = Read-DlProgress $d.Prog
+        if ($null -ne $pct) { $d.Item.SubItems[3].Text = "$pct%" }
+        if ($d.Proc.HasExited) {
+            $finished += $d
+            if ($d.Proc.ExitCode -eq 0) {
+                $files = Find-Media $d.Dir
+                if ($files.Count -gt 0) {
+                    $d.Item.SubItems[2].Text = "baixado ($($files.Count)) - na fila"
+                    $d.Item.SubItems[3].Text = '100%'
+                    Add-Files $files
+                    $script:Processing = $true; $btnStart.Enabled = $false; $btnStop.Enabled = $true
+                } else {
+                    $d.Item.SubItems[2].Text = 'erro: nada baixado'
+                }
+            } else {
+                $err = ''
+                if (Test-Path $d.Err) { $err = (Get-Content $d.Err -ErrorAction SilentlyContinue | Select-Object -Last 1) }
+                $d.Item.SubItems[2].Text = "erro: $err"
+            }
+        }
+    }
+    foreach ($d in $finished) { $script:Downloads.Remove($d) }
+}
+
 # Maquina de estados executada pelo timer (a cada 400ms)
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 400
 $timer.Add_Tick({
+    Poll-Downloads
     if (-not $script:Processing) { return }
 
     # Sem processo rodando: pega o proximo da fila
@@ -505,6 +696,9 @@ $btnStop.Add_Click({ Stop-Processing 'Interrompido.' })
 $form.Add_FormClosing({
     if ($script:CurrentProc -and -not $script:CurrentProc.HasExited) {
         try { $script:CurrentProc.Kill() } catch {}
+    }
+    foreach ($d in $script:Downloads) {
+        if ($d.Proc -and -not $d.Proc.HasExited) { try { $d.Proc.Kill() } catch {} }
     }
 })
 
